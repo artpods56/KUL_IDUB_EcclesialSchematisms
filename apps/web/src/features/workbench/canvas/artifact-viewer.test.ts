@@ -339,6 +339,7 @@ describe("shared presentation", () => {
         },
       ],
       bindings: [],
+      annotations: [],
     });
 
     expect(state.nodes[0]?.data.layout).toEqual({

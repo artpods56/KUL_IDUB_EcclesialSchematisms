@@ -50,36 +50,48 @@ vi.mock("@/lib/api", () => apiMocks);
 const executionId = "00000000-0000-4000-8000-000000000001";
 const executionDraft: CreateSavedGraphRequest = {
   name: "Execution snapshot",
-  nodes: [{
-    id: "node-1",
-    operator_id: "test.operator",
-    operator_version: 1,
-    config: {},
-    input_plugs: [],
-    position: { x: 0, y: 0 },
-  }],
-  edges: [],
-  presentation: {
-    viewers: [],
-    links: [],
-    bindings: [],
-    annotations: [],
+  document: {
+    schema_version: 5,
+    nodes: [{
+      id: "node-1",
+      operator_id: "test.operator",
+      operator_version: 1,
+      config: {},
+      input_plugs: [],
+      artifact_type_bindings: [],
+      position: { x: 0, y: 0 },
+    }],
+    edges: [],
+    presentation: {
+      viewers: [],
+      links: [],
+      bindings: [],
+      annotations: [],
+    },
   },
 };
 const executionFingerprint = savedGraphExecutionFingerprint(executionDraft);
 const presentationOnlyExecutionFingerprint = savedGraphExecutionFingerprint({
   ...executionDraft,
-  presentation: {
-    ...executionDraft.presentation,
-    viewers: [{ id: "viewer-1", position: { x: 40, y: 80 } }],
+  document: {
+    ...executionDraft.document,
+    presentation: {
+      viewers: [{ id: "viewer-1", position: { x: 40, y: 80 } }],
+      links: executionDraft.document.presentation?.links ?? [],
+      bindings: executionDraft.document.presentation?.bindings ?? [],
+      annotations: executionDraft.document.presentation?.annotations ?? [],
+    },
   },
 });
 const changedExecutionFingerprint = savedGraphExecutionFingerprint({
   ...executionDraft,
-  nodes: executionDraft.nodes?.map((node) => ({
-    ...node,
-    config: { changed: true },
-  })),
+  document: {
+    ...executionDraft.document,
+    nodes: executionDraft.document.nodes.map((node) => ({
+      ...node,
+      config: { changed: true },
+    })),
+  },
 });
 const liveSubscriptions: Array<{
   executionId: string;

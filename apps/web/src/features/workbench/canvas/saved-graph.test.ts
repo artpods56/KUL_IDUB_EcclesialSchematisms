@@ -5,6 +5,7 @@ import type {
   NodeRegistry,
   NodeSpec,
   SavedGraph,
+  SavedGraphDocument,
 } from "@/lib/api";
 import { decodeHandleId } from "./handles";
 import {
@@ -106,7 +107,7 @@ function registry(
 
 function graphWithEdge(
   edgeConversion: Pick<
-    NonNullable<SavedGraph["edges"]>[number],
+    SavedGraphDocument["edges"][number],
     "conversion_path"
   >,
 ): SavedGraph {
@@ -116,38 +117,50 @@ function graphWithEdge(
     name: "Conversion path",
     created_at: "2026-07-15T12:00:00Z",
     updated_at: "2026-07-15T12:00:00Z",
-    nodes: [
-      {
-        id: "source-node",
-        operator_id: "source",
-        operator_version: 1,
-        config: {},
-        input_plugs: [],
-        position: { x: 0, y: 0 },
+    document: {
+      schema_version: 5,
+      nodes: [
+        {
+          id: "source-node",
+          operator_id: "source",
+          operator_version: 1,
+          config: {},
+          input_plugs: [],
+          artifact_type_bindings: [],
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "target-node",
+          operator_id: "target",
+          operator_version: 1,
+          config: {},
+          input_plugs: [],
+          artifact_type_bindings: [],
+          position: { x: 300, y: 0 },
+        },
+      ],
+      edges: [
+        {
+          id: "edge",
+          enabled: true,
+          from_node: "source-node",
+          from_port: "output",
+          to_node: "target-node",
+          to_port: "input",
+          to_plug: null,
+          collection_mode: "direct",
+          projection: null,
+          route_offset: null,
+          ...edgeConversion,
+        },
+      ],
+      presentation: {
+        viewers: [],
+        links: [],
+        bindings: [],
+        annotations: [],
       },
-      {
-        id: "target-node",
-        operator_id: "target",
-        operator_version: 1,
-        config: {},
-        input_plugs: [],
-        position: { x: 300, y: 0 },
-      },
-    ],
-    edges: [
-      ({
-        id: "edge",
-        from_node: "source-node",
-        from_port: "output",
-        to_node: "target-node",
-        to_port: "input",
-        to_plug: null,
-        collection_mode: "direct",
-        projection: null,
-        route_offset: null,
-        ...edgeConversion,
-      }) as unknown as NonNullable<SavedGraph["edges"]>[number],
-    ],
+    },
   };
 }
 
@@ -157,10 +170,13 @@ function graphWithCollectionMode(
   const graph = graphWithEdge({ conversion_path: conversionPath });
   return {
     ...graph,
-    edges: (graph.edges ?? []).map((edge) => ({
-      ...edge,
-      collection_mode: collectionMode,
-    })),
+    document: {
+      ...graph.document,
+      edges: graph.document.edges.map((edge) => ({
+        ...edge,
+        collection_mode: collectionMode,
+      })),
+    },
   };
 }
 
@@ -184,18 +200,21 @@ describe("scoped Plugin node hydration", () => {
     const base = graphWithEdge({ conversion_path: conversionPath });
     const graph: SavedGraph = {
       ...base,
-      nodes: (base.nodes ?? []).map((node) =>
-        node.id === "source-node"
-          ? {
-              ...node,
-              plugin_release: {
-                scope: "system",
-                slug: "reports",
-                revision: 1,
-              },
-            }
-          : node,
-      ),
+      document: {
+        ...base.document,
+        nodes: base.document.nodes.map((node) =>
+          node.id === "source-node"
+            ? {
+                ...node,
+                plugin_release_pin: {
+                  scope: "system",
+                  slug: "reports",
+                  revision: 1,
+                },
+              }
+            : node,
+        ),
+      },
     };
     const liveRegistry = registry();
     const systemSpec: NodeSpec = {
@@ -239,38 +258,39 @@ describe("unavailable saved operators", () => {
     const base = graphWithEdge({ conversion_path: conversionPath });
     const graph: SavedGraph = {
       ...base,
-      nodes: (base.nodes ?? []).map((node) =>
-        node.id === "source-node"
-          ? {
-              ...node,
-              operator_id: "gis.map.compose",
-              plugin_release: {
-                scope: "system",
-                slug: "gis",
-                revision: 4,
+      document: {
+        ...base.document,
+        nodes: base.document.nodes.map((node) =>
+          node.id === "source-node"
+            ? {
+                ...node,
+                operator_id: "gis.map.compose",
+                plugin_release_pin: {
+                  scope: "system",
+                  slug: "gis",
+                  revision: 4,
+                },
+                config: { nested: { preserved: true } },
+                input_plugs: [
+                  { id: "historical-plug", port: "historical-input" },
+                ],
+                artifact_type_bindings: [
+                  {
+                    variable: "Z",
+                    artifact_type: { id: "z", schema_version: 1 },
+                  },
+                  {
+                    variable: "A",
+                    artifact_type: { id: "x", schema_version: 1 },
+                  },
+                ],
+                layout: null,
+              }
+            : {
+                ...node,
               },
-              config: { nested: { preserved: true } },
-              input_plugs: [
-                { id: "historical-plug", port: "historical-input" },
-              ],
-              artifact_type_bindings: [
-                {
-                  variable: "Z",
-                  artifact_type: { id: "z", schema_version: 1 },
-                },
-                {
-                  variable: "A",
-                  artifact_type: { id: "x", schema_version: 1 },
-                },
-              ],
-              layout: null,
-            }
-          : {
-              ...node,
-              artifact_type_bindings: [],
-              layout: null,
-            },
-      ),
+        ),
+      },
     };
     const liveRegistry = registry();
     const hydrated = hydrateSavedGraph(graph, {
@@ -313,18 +333,21 @@ describe("saved node layout", () => {
     const base = graphWithEdge({ conversion_path: conversionPath });
     const withLayout: SavedGraph = {
       ...base,
-      nodes: (base.nodes ?? []).map((node, index) =>
-        index === 0
-          ? {
-              ...node,
-              layout: {
-                width: 420,
-                body_height: 180,
-                appendix_height: 320,
-              },
-            }
-          : node,
-      ),
+      document: {
+        ...base.document,
+        nodes: base.document.nodes.map((node, index) =>
+          index === 0
+            ? {
+                ...node,
+                layout: {
+                  width: 420,
+                  body_height: 180,
+                  appendix_height: 320,
+                },
+              }
+            : node,
+        ),
+      },
     };
     const hydrated = hydrateSavedGraph(withLayout, registry());
     expect(hydrated.nodes[0]?.data.layout).toEqual({
@@ -354,25 +377,26 @@ describe("saved edge enablement", () => {
     const legacyGraph = graphWithEdge({ conversion_path: conversionPath });
     const disabledGraph: SavedGraph = {
       ...legacyGraph,
-      edges: (legacyGraph.edges ?? []).map((edge) => ({
-        ...edge,
-        enabled: false,
-      })),
+      document: {
+        ...legacyGraph.document,
+        edges: legacyGraph.document.edges.map((edge) => ({
+          ...edge,
+          enabled: false,
+        })),
+      },
     };
     const disabled = hydrateSavedGraph(disabledGraph, registry());
     const enabledDraft = {
       name: "Edge state",
-      nodes: legacyGraph.nodes,
-      edges: legacyGraph.edges,
+      document: legacyGraph.document,
     };
     const disabledDraft = {
       name: "Edge state",
-      nodes: disabledGraph.nodes,
-      edges: disabledGraph.edges,
+      document: disabledGraph.document,
     };
 
     expect(disabled.edges[0]?.data?.enabled).toBe(false);
-    expect(disabledDraft.edges?.[0]).toMatchObject({ enabled: false });
+    expect(disabledDraft.document.edges[0]).toMatchObject({ enabled: false });
     expect(savedGraphFingerprint(disabledDraft)).not.toBe(
       savedGraphFingerprint(enabledDraft),
     );
@@ -382,17 +406,19 @@ describe("saved edge enablement", () => {
     const graph = graphWithEdge({ conversion_path: conversionPath });
     const enabledDraft = {
       name: "Legacy fingerprint",
-      nodes: graph.nodes,
-      edges: graph.edges,
+      document: graph.document,
     };
-    const enabledEdge = enabledDraft.edges?.[0];
+    const enabledEdge = enabledDraft.document.edges[0];
     if (!enabledEdge) throw new Error("enabled-edge fixture is incomplete");
     const legacyEdge = { ...enabledEdge } as
       Omit<typeof enabledEdge, "enabled"> & { enabled?: boolean };
     delete legacyEdge.enabled;
     const legacyDraft = {
       ...enabledDraft,
-      edges: [legacyEdge],
+      document: {
+        ...enabledDraft.document,
+        edges: [legacyEdge],
+      },
     } as unknown as typeof enabledDraft;
 
     expect(
@@ -404,23 +430,21 @@ describe("saved edge enablement", () => {
     const graph = graphWithEdge({ conversion_path: conversionPath });
     const base = {
       name: "Presentation drift",
-      nodes: graph.nodes,
-      edges: graph.edges,
-      presentation: {
-        viewers: [],
-        links: [],
-        bindings: [],
-        annotations: [],
-      },
+      document: graph.document,
     };
     const withViewer = {
       ...base,
-      presentation: {
-        ...base.presentation,
-        viewers: [{
-          id: "viewer-1",
-          position: { x: 1, y: 2 },
-        }],
+      document: {
+        ...base.document,
+        presentation: {
+          viewers: [{
+            id: "viewer-1",
+            position: { x: 1, y: 2 },
+          }],
+          links: base.document.presentation?.links ?? [],
+          bindings: base.document.presentation?.bindings ?? [],
+          annotations: base.document.presentation?.annotations ?? [],
+        },
       },
     };
 
@@ -543,32 +567,35 @@ describe("saved collection modes", () => {
       ],
     };
     const graph = graphWithCollectionMode("map");
-    const sourceNode = graph.nodes?.[0];
-    const targetNode = graph.nodes?.[1];
-    const edge = graph.edges?.[0];
+    const sourceNode = graph.document.nodes[0];
+    const targetNode = graph.document.nodes[1];
+    const edge = graph.document.edges[0];
     if (!sourceNode || !targetNode || !edge) {
       throw new Error("map-edge test fixture is incomplete");
     }
     const invalidGraph: SavedGraph = {
       ...graph,
-      nodes: [
-        sourceNode,
-        {
-          ...sourceNode,
-          id: "other-source-node",
-          operator_id: "other-source",
-        },
-        targetNode,
-      ],
-      edges: [
-        { ...edge, id: "map-left", to_port: "left" },
-        {
-          ...edge,
-          id: "map-right",
-          from_node: "other-source-node",
-          to_port: "right",
-        },
-      ],
+      document: {
+        ...graph.document,
+        nodes: [
+          sourceNode,
+          {
+            ...sourceNode,
+            id: "other-source-node",
+            operator_id: "other-source",
+          },
+          targetNode,
+        ],
+        edges: [
+          { ...edge, id: "map-left", to_port: "left" },
+          {
+            ...edge,
+            id: "map-right",
+            from_node: "other-source-node",
+            to_port: "right",
+          },
+        ],
+      },
     };
 
     expect(() => hydrateSavedGraph(invalidGraph, testRegistry)).toThrow(
@@ -688,42 +715,53 @@ function graphWithCollectPlugs(): SavedGraph {
     name: "Collect inputs",
     created_at: "2026-07-15T12:00:00Z",
     updated_at: "2026-07-15T12:00:00Z",
-    nodes: [
-      {
-        id: "source-node",
-        operator_id: "source",
-        operator_version: 1,
-        config: {},
-        input_plugs: [],
-        position: { x: 0, y: 0 },
+    document: {
+      schema_version: 5,
+      nodes: [
+        {
+          id: "source-node",
+          operator_id: "source",
+          operator_version: 1,
+          config: {},
+          input_plugs: [],
+          artifact_type_bindings: [],
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "collect-node",
+          operator_id: "test.collect",
+          operator_version: 1,
+          config: {},
+          input_plugs: [
+            { id: "plug-first", port: "items" },
+            { id: "plug-second", port: "items" },
+          ],
+          artifact_type_bindings: [],
+          position: { x: 300, y: 0 },
+        },
+      ],
+      edges: [
+        {
+          id: "edge",
+          from_node: "source-node",
+          from_port: "output",
+          to_node: "collect-node",
+          to_port: "items",
+          to_plug: "plug-second",
+          enabled: true,
+          collection_mode: "direct",
+          projection: null,
+          conversion_path: [],
+          route_offset: { x: 12, y: -4 },
+        },
+      ],
+      presentation: {
+        viewers: [],
+        links: [],
+        bindings: [],
+        annotations: [],
       },
-      {
-        id: "collect-node",
-        operator_id: "test.collect",
-        operator_version: 1,
-        config: {},
-        input_plugs: [
-          { id: "plug-first", port: "items" },
-          { id: "plug-second", port: "items" },
-        ],
-        position: { x: 300, y: 0 },
-      },
-    ],
-    edges: [
-      {
-        id: "edge",
-        from_node: "source-node",
-        from_port: "output",
-        to_node: "collect-node",
-        to_port: "items",
-        to_plug: "plug-second",
-        enabled: true,
-        collection_mode: "direct",
-        projection: null,
-        conversion_path: [],
-        route_offset: { x: 12, y: -4 },
-      },
-    ],
+    },
   };
 }
 
@@ -745,10 +783,13 @@ describe("saved instance plugs", () => {
 
   it("rejects an edge that targets a missing plug", () => {
     const graph = graphWithCollectPlugs();
-    const edge = graph.edges?.[0];
+    const edge = graph.document.edges[0];
     const invalidGraph: SavedGraph = {
       ...graph,
-      edges: edge ? [{ ...edge, to_plug: "plug-missing" }] : [],
+      document: {
+        ...graph.document,
+        edges: edge ? [{ ...edge, to_plug: "plug-missing" }] : [],
+      },
     };
 
     expect(() => hydrateSavedGraph(invalidGraph, collectRegistry())).toThrow(
@@ -823,46 +864,55 @@ function graphWithGenericCollectBinding(): SavedGraph {
     name: "Generic collect",
     created_at: "2026-07-15T12:00:00Z",
     updated_at: "2026-07-15T12:00:00Z",
-    nodes: [
-      {
-        id: "source-node",
-        operator_id: "source",
-        operator_version: 1,
-        config: {},
-        input_plugs: [],
-        artifact_type_bindings: [],
-        position: { x: 0, y: 0 },
+    document: {
+      schema_version: 5,
+      nodes: [
+        {
+          id: "source-node",
+          operator_id: "source",
+          operator_version: 1,
+          config: {},
+          input_plugs: [],
+          artifact_type_bindings: [],
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "collect-node",
+          operator_id: "sequence.collect",
+          operator_version: 1,
+          config: {},
+          input_plugs: [{ id: "plug-1", port: "items" }],
+          artifact_type_bindings: [
+            {
+              variable: "T",
+              artifact_type: { id: "scalar.integer", schema_version: 1 },
+            },
+          ],
+          position: { x: 300, y: 0 },
+        },
+      ],
+      edges: [
+        {
+          id: "edge",
+          from_node: "source-node",
+          from_port: "output",
+          to_node: "collect-node",
+          to_port: "items",
+          to_plug: "plug-1",
+          enabled: true,
+          collection_mode: "direct",
+          projection: null,
+          conversion_path: [],
+          route_offset: null,
+        },
+      ],
+      presentation: {
+        viewers: [],
+        links: [],
+        bindings: [],
+        annotations: [],
       },
-      {
-        id: "collect-node",
-        operator_id: "sequence.collect",
-        operator_version: 1,
-        config: {},
-        input_plugs: [{ id: "plug-1", port: "items" }],
-        artifact_type_bindings: [
-          {
-            variable: "T",
-            artifact_type: { id: "scalar.integer", schema_version: 1 },
-          },
-        ],
-        position: { x: 300, y: 0 },
-      },
-    ],
-    edges: [
-      {
-        id: "edge",
-        from_node: "source-node",
-        from_port: "output",
-        to_node: "collect-node",
-        to_port: "items",
-        to_plug: "plug-1",
-        enabled: true,
-        collection_mode: "direct",
-        projection: null,
-        conversion_path: [],
-        route_offset: null,
-      },
-    ],
+    },
   };
 }
 
@@ -889,22 +939,25 @@ describe("saved generic artifact type bindings", () => {
     const graph = graphWithGenericCollectBinding();
     const invalid: SavedGraph = {
       ...graph,
-      nodes: (graph.nodes ?? []).map((node) =>
-        node.id === "collect-node"
-          ? {
-              ...node,
-              artifact_type_bindings: [
-                {
-                  variable: "Missing",
-                  artifact_type: {
-                    id: "scalar.integer",
-                    schema_version: 1,
+      document: {
+        ...graph.document,
+        nodes: graph.document.nodes.map((node) =>
+          node.id === "collect-node"
+            ? {
+                ...node,
+                artifact_type_bindings: [
+                  {
+                    variable: "Missing",
+                    artifact_type: {
+                      id: "scalar.integer",
+                      schema_version: 1,
+                    },
                   },
-                },
-              ],
-            }
-          : node,
-      ),
+                ],
+              }
+            : node,
+        ),
+      },
     };
 
     const hydrated = hydrateSavedGraph(invalid, genericCollectRegistry());
@@ -921,26 +974,31 @@ describe("saved generic artifact type bindings", () => {
 
   it("marks an unavailable artifact type invalid without rejecting the graph", () => {
     const graph = graphWithGenericCollectBinding();
-    const collectNode = graph.nodes?.find((node) => node.id === "collect-node");
+    const collectNode = graph.document.nodes.find(
+      (node) => node.id === "collect-node",
+    );
     const invalid: SavedGraph = {
       ...graph,
-      nodes: collectNode
-        ? [
-            {
-              ...collectNode,
-              artifact_type_bindings: [
-                {
-                  variable: "T",
-                  artifact_type: {
-                    id: "artifact.missing",
-                    schema_version: 9,
+      document: {
+        ...graph.document,
+        nodes: collectNode
+          ? [
+              {
+                ...collectNode,
+                artifact_type_bindings: [
+                  {
+                    variable: "T",
+                    artifact_type: {
+                      id: "artifact.missing",
+                      schema_version: 9,
+                    },
                   },
-                },
-              ],
-            },
-          ]
-        : [],
-      edges: [],
+                ],
+              },
+            ]
+          : [],
+        edges: [],
+      },
     };
 
     const hydrated = hydrateSavedGraph(invalid, genericCollectRegistry());
@@ -1015,37 +1073,48 @@ describe("saved graph module nodes", () => {
       name: "Map extraction module",
       created_at: "2026-07-16T12:00:00Z",
       updated_at: "2026-07-16T12:00:00Z",
-      nodes: [
-        {
-          id: "images",
-          operator_id: IMAGE_UPLOAD_OPERATOR_ID,
-          operator_version: 1,
-          config: {},
-          input_plugs: [],
-          position: { x: 0, y: 0 },
+      document: {
+        schema_version: 5,
+        nodes: [
+          {
+            id: "images",
+            operator_id: IMAGE_UPLOAD_OPERATOR_ID,
+            operator_version: 1,
+            config: {},
+            input_plugs: [],
+            artifact_type_bindings: [],
+            position: { x: 0, y: 0 },
+          },
+          {
+            id: "extract",
+            operator_id: moduleOperatorId,
+            operator_version: 1,
+            config: {},
+            input_plugs: [],
+            artifact_type_bindings: [],
+            position: { x: 300, y: 0 },
+          },
+        ],
+        edges: [{
+          id: "map-images",
+          from_node: "images",
+          from_port: "output",
+          to_node: "extract",
+          to_port: "image",
+          to_plug: null,
+          enabled: true,
+          collection_mode: "map",
+          projection: null,
+          conversion_path: [],
+          route_offset: null,
+        }],
+        presentation: {
+          viewers: [],
+          links: [],
+          bindings: [],
+          annotations: [],
         },
-        {
-          id: "extract",
-          operator_id: moduleOperatorId,
-          operator_version: 1,
-          config: {},
-          input_plugs: [],
-          position: { x: 300, y: 0 },
-        },
-      ],
-      edges: [{
-        id: "map-images",
-        from_node: "images",
-        from_port: "output",
-        to_node: "extract",
-        to_port: "image",
-        to_plug: null,
-        enabled: true,
-        collection_mode: "map",
-        projection: null,
-        conversion_path: [],
-        route_offset: null,
-      }],
+      },
     };
     const moduleV1 = moduleSpec(1, false);
     const hydrated = hydrateSavedGraph(savedGraph, {

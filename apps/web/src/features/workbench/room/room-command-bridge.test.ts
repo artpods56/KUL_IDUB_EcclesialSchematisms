@@ -18,6 +18,8 @@ const document: AuthoredGraphDocument = {
       operator_version: 1,
       position: { x: 10, y: 20 },
       config: { threshold: 1 },
+      input_plugs: [],
+      artifact_type_bindings: [],
     },
   ],
   edges: [],
@@ -48,7 +50,7 @@ const scopedNode: AuthoredGraphDocument["nodes"][number] = {
   layout: { width: 420, body_height: 180, appendix_height: 260 },
   operator_id: "reports.render",
   operator_version: 7,
-  plugin_release: { scope: "system", slug: "reports", revision: 11 },
+  plugin_release_pin: { scope: "system", slug: "reports", revision: 11 },
   position: { x: 80, y: 120 },
 };
 
@@ -148,7 +150,7 @@ describe("room-command-bridge", () => {
         nodes: [
           {
             id: "scoped",
-            plugin_release: {
+            plugin_release_pin: {
               scope: "system",
               slug: "reports",
               revision: 11,
@@ -173,16 +175,19 @@ describe("room-command-bridge", () => {
     });
   });
 
-  it("projects saved draft node aliases into the exact replace_document wire shape", () => {
+  it("projects the canonical saved document into replace_document", () => {
     const room = toRoomReplaceDocumentCommand({
       name: "Replacement",
-      nodes: [scopedNode],
-      edges: [],
-      presentation: {
-        viewers: [],
-        links: [],
-        bindings: [],
-        annotations: [],
+      document: {
+        schema_version: 5,
+        nodes: [scopedNode],
+        edges: [],
+        presentation: {
+          viewers: [],
+          links: [],
+          bindings: [],
+          annotations: [],
+        },
       },
     });
 
@@ -325,7 +330,7 @@ describe("room-command-bridge", () => {
       kind: "add_node",
       node: {
         id: "scoped-copy",
-        plugin_release: {
+        plugin_release_pin: {
           scope: "system",
           slug: "reports",
           revision: 11,

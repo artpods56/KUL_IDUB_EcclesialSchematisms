@@ -1,5 +1,7 @@
 import type {
+  CollaborativeHead,
   CreateSavedGraphRequest,
+  SavedGraphDocument,
   SavedGraphEdge,
   SavedGraphNode,
 } from "@/lib/api";
@@ -20,12 +22,8 @@ export interface AuthoredGraphDocument {
 export type AuthoredGraphNode = SavedGraphNode;
 export type AuthoredGraphEdge = SavedGraphEdge;
 
-type SavedGraphNodeInput = NonNullable<
-  CreateSavedGraphRequest["nodes"]
->[number];
-type SavedGraphEdgeInput = NonNullable<
-  CreateSavedGraphRequest["edges"]
->[number];
+type CollaborativeSavedGraphNode = CollaborativeHead["nodes"][number];
+type CollaborativeSavedGraphEdge = CollaborativeHead["edges"][number];
 type SavedGraphEdgeUpdate = Partial<
   Pick<
     AuthoredGraphEdge,
@@ -75,7 +73,9 @@ export type GraphCommand =
   | {
       readonly kind: "update_node_plugin_release";
       readonly node_id: string;
-      readonly plugin_release: NonNullable<AuthoredGraphNode["plugin_release"]>;
+      readonly plugin_release: NonNullable<
+        AuthoredGraphNode["plugin_release_pin"]
+      >;
     }
   | {
       readonly kind: "add_input_plug";
@@ -134,35 +134,55 @@ export type GraphCommand =
     };
 
 export function authoredGraphDocument(
-  value: CreateSavedGraphRequest,
+  value: Pick<CreateSavedGraphRequest, "name" | "document">,
 ): AuthoredGraphDocument {
   return {
     name: value.name,
-    nodes: (value.nodes ?? []).map(projectSavedGraphNode),
-    edges: (value.edges ?? []).map(projectSavedGraphEdge),
+    nodes: value.document.nodes.map(projectSavedGraphNode),
+    edges: value.document.edges.map(projectSavedGraphEdge),
+  };
+}
+
+/** Project the flattened collaboration response into the canonical document. */
+export function authoredGraphDocumentFromCollaborativeHead(
+  value: Pick<CollaborativeHead, "name" | "nodes" | "edges">,
+): AuthoredGraphDocument {
+  return {
+    name: value.name,
+    nodes: value.nodes.map(projectSavedGraphNode),
+    edges: value.edges.map(projectSavedGraphEdge),
   };
 }
 
 export function createSavedGraphRequest(
   document: AuthoredGraphDocument,
-  presentation?: CreateSavedGraphRequest["presentation"],
+  presentation?: SavedGraphDocument["presentation"],
 ): CreateSavedGraphRequest {
   return {
     name: document.name.trim(),
-    nodes: document.nodes.map(projectSavedGraphNode),
-    edges: document.edges.map(projectSavedGraphEdge),
-    presentation: presentation ?? {
-      viewers: [],
-      links: [],
-      bindings: [],
-      annotations: [],
+    document: {
+      schema_version: 5,
+      nodes: document.nodes.map(projectSavedGraphNode),
+      edges: document.edges.map(projectSavedGraphEdge),
+      presentation: presentation ?? {
+        viewers: [],
+        links: [],
+        bindings: [],
+        annotations: [],
+      },
     },
   };
 }
 
 function projectSavedGraphNode(
-  node: SavedGraphNodeInput | SavedGraphNode,
+  node: SavedGraphNode | CollaborativeSavedGraphNode,
 ): SavedGraphNode {
+  let pluginReleasePin: SavedGraphNode["plugin_release_pin"] = null;
+  if ("plugin_release_pin" in node) {
+    pluginReleasePin = node.plugin_release_pin;
+  } else if ("plugin_release" in node) {
+    pluginReleasePin = node.plugin_release;
+  }
   return {
     artifact_type_bindings: (node.artifact_type_bindings ?? []).map(
       projectArtifactTypeBinding,
@@ -173,13 +193,13 @@ function projectSavedGraphNode(
     layout: projectSavedGraphLayout(node.layout),
     operator_id: node.operator_id,
     operator_version: node.operator_version,
-    plugin_release:
-      node.plugin_release === null || node.plugin_release === undefined
+    plugin_release_pin:
+      pluginReleasePin === null || pluginReleasePin === undefined
         ? null
         : {
-            scope: node.plugin_release.scope,
-            slug: node.plugin_release.slug,
-            revision: node.plugin_release.revision,
+            scope: pluginReleasePin.scope,
+            slug: pluginReleasePin.slug,
+            revision: pluginReleasePin.revision,
           },
     position: {
       x: node.position.x,
@@ -219,7 +239,7 @@ function projectArtifactTypeBinding(
 }
 
 function projectSavedGraphEdge(
-  edge: SavedGraphEdgeInput | SavedGraphEdge,
+  edge: SavedGraphEdge | CollaborativeSavedGraphEdge,
 ): SavedGraphEdge {
   return {
     collection_mode: edge.collection_mode ?? "direct",
@@ -462,7 +482,7 @@ export function applyGraphCommandNormalized(
     case "update_node_plugin_release":
       return updateNode(document, command.node_id, (node) => ({
         ...node,
-        plugin_release: {
+        plugin_release_pin: {
           scope: command.plugin_release.scope,
           slug: command.plugin_release.slug,
           revision: command.plugin_release.revision,

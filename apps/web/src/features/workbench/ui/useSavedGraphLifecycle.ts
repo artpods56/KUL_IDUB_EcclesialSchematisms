@@ -26,10 +26,12 @@ import {
 } from "../canvas/saved-graph";
 import {
   emptyGraphPresentation,
+  presentationFromCollaborativeHead,
   type GraphPresentation,
 } from "../canvas/artifact-viewer";
 import {
   authoredGraphDocument,
+  authoredGraphDocumentFromCollaborativeHead,
   createSavedGraphRequest,
   type AuthoredGraphDocument,
 } from "../model/graph-document";
@@ -285,17 +287,12 @@ export function useSavedGraphLifecycle({
   const syncFromCollaborativeHead = React.useCallback((
     head: CollaborativeHead,
   ): void => {
-    const responseDocument = authoredGraphDocument({
-      name: head.name,
-      nodes: head.nodes ?? [],
-      edges: head.edges ?? [],
-    });
-    const responsePresentation =
-      head.presentation ?? emptyGraphPresentation();
+    const responseDocument = authoredGraphDocumentFromCollaborativeHead(head);
+    const responsePresentation = presentationFromCollaborativeHead(head);
     const nextActiveGraph = {
       id: head.graph_id,
       revision: head.checkpoint_revision,
-      nodes: head.nodes ?? [],
+      nodes: responseDocument.nodes,
     };
     const headIsCheckpointed =
       head.collaboration_sequence === head.checkpoint_sequence;
@@ -407,17 +404,13 @@ export function useSavedGraphLifecycle({
         return;
       }
       const savedGraph = persistenceResult.graph;
-      const responseDocument = authoredGraphDocument({
-        name: savedGraph.name,
-        nodes: savedGraph.nodes ?? [],
-        edges: savedGraph.edges ?? [],
-      });
+      const responseDocument = authoredGraphDocument(savedGraph);
       const responsePresentation =
-        savedGraph.presentation ?? emptyGraphPresentation();
+        savedGraph.document.presentation ?? emptyGraphPresentation();
       const nextActiveGraph = {
         id: savedGraph.id,
         revision: savedGraph.revision,
-        nodes: savedGraph.nodes ?? [],
+        nodes: savedGraph.document.nodes,
       };
       const createdGraph = activeGraph === null;
       if (createdGraph) {
@@ -598,13 +591,9 @@ export function useSavedGraphLifecycle({
         return;
       }
 
-      const responseDocument = authoredGraphDocument({
-        name: savedGraph.name,
-        nodes: savedGraph.nodes ?? [],
-        edges: savedGraph.edges ?? [],
-      });
+      const responseDocument = authoredGraphDocument(savedGraph);
       const responsePresentation =
-        savedGraph.presentation ?? emptyGraphPresentation();
+        savedGraph.document.presentation ?? emptyGraphPresentation();
       const openedNodes = hydrated.nodes.map((node) => ({
         ...node,
         data: attachNodeCallbacks(node.data),
@@ -614,7 +603,7 @@ export function useSavedGraphLifecycle({
       const nextActiveGraph = {
         id: savedGraph.id,
         revision: savedGraph.revision,
-        nodes: savedGraph.nodes ?? [],
+        nodes: savedGraph.document.nodes,
       };
       setActiveGraph(nextActiveGraph);
       rememberSavedDraft(

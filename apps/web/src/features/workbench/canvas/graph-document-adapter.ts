@@ -163,7 +163,7 @@ export function addNodeCommand(
       layout: serializeNodeLayout(data.layout),
       operator_id: data.spec.operator_id,
       operator_version: data.spec.operator_version,
-      plugin_release: data.pluginReleasePin
+      plugin_release_pin: data.pluginReleasePin
         ? {
             scope: data.pluginReleasePin.scope,
             slug: data.pluginReleasePin.slug,

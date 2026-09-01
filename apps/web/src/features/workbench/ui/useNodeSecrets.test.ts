@@ -83,6 +83,8 @@ function savedNode(
     operator_version: 1,
     position: { x: 0, y: 0 },
     config: { base_url: baseUrl },
+    input_plugs: [],
+    artifact_type_bindings: [],
   };
 }
 

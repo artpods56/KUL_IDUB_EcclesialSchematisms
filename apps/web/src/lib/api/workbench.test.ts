@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { CopyExactHeadResponse } from "./contract";
 import {
   checkpointGraph,
   copyExactHead,
+  createSavedGraph,
   deleteSavedGraph,
+  getSavedGraph,
   getArtifactGeoRender,
   getArtifactTableCell,
   getArtifactTablePage,
@@ -13,12 +16,93 @@ import {
   artifactContentUrl,
   artifactDownloadUrl,
   submitGraphCommand,
+  updateSavedGraph,
   uploadFile,
 } from "./workbench";
 
 afterEach(() => vi.unstubAllGlobals());
 
 const WORKSPACE_ID = "workspace/1";
+
+describe("saved graph HTTP API", () => {
+  it("writes and reads one canonical document shape", async () => {
+    const document = {
+      schema_version: 5 as const,
+      nodes: [],
+      edges: [],
+      presentation: {
+        viewers: [],
+        links: [],
+        bindings: [],
+        annotations: [],
+      },
+    };
+    const saved = {
+      id: "graph/1",
+      name: "Vision graph",
+      revision: 1,
+      created_at: "2026-09-01T12:00:00Z",
+      updated_at: "2026-09-01T12:00:00Z",
+      document,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(saved), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(saved), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ...saved,
+        revision: 2,
+        name: "Renamed vision graph",
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createSavedGraph(WORKSPACE_ID, {
+      name: saved.name,
+      document,
+    });
+    const loaded = await getSavedGraph(WORKSPACE_ID, saved.id);
+    await updateSavedGraph(WORKSPACE_ID, saved.id, {
+      name: "Renamed vision graph",
+      document: loaded.document,
+      expected_revision: loaded.revision,
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/workspaces/workspace%2F1/graphs",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ name: saved.name, document }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/workspaces/workspace%2F1/graphs/graph%2F1",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/workspaces/workspace%2F1/graphs/graph%2F1",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          name: "Renamed vision graph",
+          document,
+          expected_revision: 1,
+        }),
+      }),
+    );
+  });
+});
 
 describe("collaboration HTTP API", () => {
   it("reads the live head and submits semantic commands", async () => {
@@ -92,6 +176,18 @@ describe("collaboration HTTP API", () => {
   });
 
   it("checkpoints, copies, and deletes with exact-head confirmation", async () => {
+    const copiedGraph = {
+      id: "graph/2",
+      name: "Copied",
+      revision: 1,
+      created_at: "2026-08-07T00:00:03Z",
+      updated_at: "2026-08-07T00:00:03Z",
+      document: {
+        schema_version: 5,
+        nodes: [],
+        edges: [],
+      },
+    } satisfies CopyExactHeadResponse;
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -115,15 +211,7 @@ describe("collaboration HTTP API", () => {
       )
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({
-            id: "graph/2",
-            name: "Copied",
-            revision: 1,
-            created_at: "2026-08-07T00:00:03Z",
-            updated_at: "2026-08-07T00:00:03Z",
-            nodes: [],
-            edges: [],
-          }),
+          JSON.stringify(copiedGraph),
           { status: 201, headers: { "Content-Type": "application/json" } },
         ),
       )

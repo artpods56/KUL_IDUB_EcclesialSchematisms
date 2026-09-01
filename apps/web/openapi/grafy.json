@@ -723,32 +723,19 @@
       "CreateSavedGraphRequest": {
         "additionalProperties": false,
         "properties": {
-          "edges": {
-            "items": {
-              "$ref": "#/components/schemas/SavedGraphEdgeModel"
-            },
-            "title": "Edges",
-            "type": "array"
+          "document": {
+            "$ref": "#/components/schemas/SavedGraphDocument"
           },
           "name": {
             "maxLength": 160,
             "minLength": 1,
             "title": "Name",
             "type": "string"
-          },
-          "nodes": {
-            "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel"
-            },
-            "title": "Nodes",
-            "type": "array"
-          },
-          "presentation": {
-            "$ref": "#/components/schemas/GraphPresentationDocumentModel"
           }
         },
         "required": [
-          "name"
+          "name",
+          "document"
         ],
         "title": "CreateSavedGraphRequest",
         "type": "object"
@@ -3816,7 +3803,7 @@
             "items": {
               "$ref": "#/components/schemas/PersonalAccessTokenScope"
             },
-            "maxItems": 12,
+            "maxItems": 13,
             "minItems": 1,
             "title": "Scopes",
             "type": "array"
@@ -4003,7 +3990,8 @@
           "execute_graph",
           "cancel_execution",
           "publish_plugin",
-          "publish_module"
+          "publish_module",
+          "manage_secrets"
         ],
         "title": "PersonalAccessTokenScope",
         "type": "string"
@@ -5308,6 +5296,20 @@
         "title": "SavedGraphEdgeModel",
         "type": "object"
       },
+      "SavedGraphExecutionRequest": {
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "SavedGraphExecutionRequest",
+        "type": "object"
+      },
       "SavedGraphInputPlug": {
         "additionalProperties": false,
         "properties": {
@@ -5685,12 +5687,8 @@
             "title": "Created At",
             "type": "string"
           },
-          "edges": {
-            "items": {
-              "$ref": "#/components/schemas/SavedGraphEdgeModel"
-            },
-            "title": "Edges",
-            "type": "array"
+          "document": {
+            "$ref": "#/components/schemas/SavedGraphDocument"
           },
           "id": {
             "format": "uuid",
@@ -5698,20 +5696,8 @@
             "type": "string"
           },
           "name": {
-            "maxLength": 160,
-            "minLength": 1,
             "title": "Name",
             "type": "string"
-          },
-          "nodes": {
-            "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel"
-            },
-            "title": "Nodes",
-            "type": "array"
-          },
-          "presentation": {
-            "$ref": "#/components/schemas/GraphPresentationDocumentModel"
           },
           "revision": {
             "title": "Revision",
@@ -5724,11 +5710,12 @@
           }
         },
         "required": [
-          "name",
           "id",
+          "name",
           "revision",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "document"
         ],
         "title": "SavedGraphResponse",
         "type": "object"
@@ -6761,12 +6748,8 @@
       "UpdateSavedGraphRequest": {
         "additionalProperties": false,
         "properties": {
-          "edges": {
-            "items": {
-              "$ref": "#/components/schemas/SavedGraphEdgeModel"
-            },
-            "title": "Edges",
-            "type": "array"
+          "document": {
+            "$ref": "#/components/schemas/SavedGraphDocument"
           },
           "expected_revision": {
             "minimum": 1.0,
@@ -6778,20 +6761,11 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
-          },
-          "nodes": {
-            "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel"
-            },
-            "title": "Nodes",
-            "type": "array"
-          },
-          "presentation": {
-            "$ref": "#/components/schemas/GraphPresentationDocumentModel"
           }
         },
         "required": [
           "name",
+          "document",
           "expected_revision"
         ],
         "title": "UpdateSavedGraphRequest",
@@ -7303,6 +7277,12 @@
         "in": "cookie",
         "name": "grafy_session",
         "type": "apiKey"
+      },
+      "HTTPBearer": {
+        "bearerFormat": "PAT",
+        "description": "Workspace-bound personal access token.",
+        "scheme": "bearer",
+        "type": "http"
       }
     }
   },
@@ -7846,6 +7826,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Artifact Content",
@@ -7955,6 +7938,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Artifact Download",
@@ -8053,6 +8039,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Query Geo Features",
@@ -8141,6 +8130,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Geo Render Descriptor",
@@ -8249,6 +8241,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Table Artifact Cell",
@@ -8416,6 +8411,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Table Artifact Page",
@@ -8514,6 +8512,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Query Table Artifact Page",
@@ -8602,6 +8603,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Table Artifact Schema",
@@ -8700,6 +8704,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Geo Exact Feature",
@@ -8788,6 +8795,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Geo Raster Tilejson",
@@ -8905,6 +8915,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Geo Raster Tile",
@@ -9020,6 +9033,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Geo Vector Pmtiles",
@@ -9124,6 +9140,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Start Graph Execution",
@@ -9182,6 +9201,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Cancel Graph Execution",
@@ -9238,6 +9260,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Graph Execution",
@@ -9312,6 +9337,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Stream Graph Execution Events",
@@ -9360,6 +9388,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "List Graph Folders",
@@ -9416,6 +9447,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Create Graph Folder",
@@ -9467,6 +9501,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Delete Graph Folder",
@@ -9533,6 +9570,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Rename Graph Folder",
@@ -9581,6 +9621,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "List Saved Graphs",
@@ -9637,6 +9680,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Create Saved Graph",
@@ -9695,6 +9741,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Copy Exact Head",
@@ -9790,6 +9839,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Delete Saved Graph",
@@ -9846,6 +9898,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Saved Graph",
@@ -9912,6 +9967,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Update Saved Graph",
@@ -9970,6 +10028,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Restore Graph",
@@ -10026,6 +10087,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Archive Graph",
@@ -10094,6 +10158,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Checkpoint Graph",
@@ -10162,6 +10229,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Submit Graph Command",
@@ -10299,9 +10369,119 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "List Graph Executions",
+        "tags": [
+          "executions"
+        ]
+      },
+      "post": {
+        "operationId": "start_saved_graph_execution_v1_workspaces__workspace_id__graphs__graph_id__executions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "graph_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Graph Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "pattern": ".*\\S.*",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedGraphExecutionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunExecutionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunExecutionQueueFullErrorResponse"
+                }
+              }
+            },
+            "description": "The durable pending execution queue is full",
+            "headers": {
+              "Retry-After": {
+                "description": "Minimum delay before retrying, in seconds",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Start Saved Graph Execution",
         "tags": [
           "executions"
         ]
@@ -10367,6 +10547,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Graph Execution History",
@@ -10435,6 +10618,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Assign Graph Folder",
@@ -10493,6 +10679,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Collaborative Head",
@@ -10561,6 +10750,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Graph Materializations",
@@ -10619,6 +10811,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Node Secret Status",
@@ -10698,6 +10893,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Delete Node Secret",
@@ -10782,6 +10980,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Configure Node Secret",
@@ -10840,6 +11041,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Record Graph Open",
@@ -10898,6 +11102,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Unstar Graph",
@@ -10954,6 +11161,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Star Graph",
@@ -11388,6 +11598,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "List Modules",
@@ -11446,6 +11659,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Import Module Release",
@@ -11504,6 +11720,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Publish Module Release",
@@ -11562,6 +11781,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Module",
@@ -11620,6 +11842,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Deprecate Module",
@@ -11678,6 +11903,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Withdraw Module",
@@ -11726,6 +11954,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "List Nodes",
@@ -11962,6 +12193,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Run Graph",
@@ -12024,6 +12258,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Create Samples",
@@ -12099,6 +12336,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "List Templates",
@@ -12155,6 +12395,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Create Template",
@@ -12213,6 +12456,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Get Template",
@@ -12279,6 +12525,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Update Template Metadata",
@@ -12337,6 +12586,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Archive Template",
@@ -12405,6 +12657,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Instantiate Template",
@@ -12463,6 +12718,9 @@
         "security": [
           {
             "APIKeyCookie": []
+          },
+          {
+            "HTTPBearer": []
           }
         ],
         "summary": "Upload File",

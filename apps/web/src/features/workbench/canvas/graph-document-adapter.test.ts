@@ -6,7 +6,10 @@ import {
   reduceWorkbenchAuthoringState,
   type WorkbenchAuthoringState,
 } from "./graph-document-adapter";
-import { authoredGraphDocument } from "../model/graph-document";
+import {
+  authoredGraphDocument,
+  createSavedGraphRequest,
+} from "../model/graph-document";
 import { createWorkflowNodeData } from "./types";
 
 const source = {
@@ -47,11 +50,11 @@ const edge = {
 
 function state(): WorkbenchAuthoringState {
   return {
-    document: authoredGraphDocument({
+    document: authoredGraphDocument(createSavedGraphRequest({
       name: "Draft",
       nodes: [source, target],
       edges: [edge],
-    }),
+    })),
     nodeOverlays: {
       source: {
         run: null,
@@ -107,7 +110,7 @@ describe("Workbench authored document adapter", () => {
         layout: { width: 420, body_height: 180, appendix_height: 260 },
         operator_id: "reports.render",
         operator_version: 7,
-        plugin_release: {
+        plugin_release_pin: {
           scope: "system",
           slug: "reports",
           revision: 11,
@@ -311,7 +314,7 @@ describe("Workbench authored document adapter", () => {
       ],
     };
     const initial: WorkbenchAuthoringState = {
-      document: authoredGraphDocument(withDescendant),
+      document: authoredGraphDocument(createSavedGraphRequest(withDescendant)),
       nodeOverlays: {
         source: {
           run: null,
@@ -364,7 +367,7 @@ describe("Workbench authored document adapter", () => {
       ],
     };
     const initial: WorkbenchAuthoringState = {
-      document: authoredGraphDocument(withDisabledEdge),
+      document: authoredGraphDocument(createSavedGraphRequest(withDisabledEdge)),
       nodeOverlays: {
         source: {
           run: null,

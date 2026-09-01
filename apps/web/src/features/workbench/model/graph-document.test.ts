@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { CreateSavedGraphRequest } from "@/lib/api";
+import type { CreateSavedGraphRequest, SavedGraphDocument } from "@/lib/api";
 import {
   applyGraphCommand,
   authoredGraphDocument,
@@ -16,7 +16,7 @@ const node = (id: string) => ({
   config: { label: id },
   input_plugs: [],
   artifact_type_bindings: [],
-  plugin_release: null,
+  plugin_release_pin: null,
   position: { x: 0, y: 0 },
   layout: null,
 });
@@ -36,11 +36,11 @@ const edge = {
 };
 
 function document(): AuthoredGraphDocument {
-  return authoredGraphDocument({
+  return authoredGraphDocument(createSavedGraphRequest({
     name: "Draft",
     nodes: [node("source"), node("target")],
     edges: [edge],
-  });
+  }));
 }
 
 describe("authored graph document", () => {
@@ -49,12 +49,17 @@ describe("authored graph document", () => {
     const request = createSavedGraphRequest(value);
 
     expect(request).toEqual({
-      ...value,
-      presentation: {
-        viewers: [],
-        links: [],
-        bindings: [],
-        annotations: [],
+      name: value.name,
+      document: {
+        schema_version: 5,
+        nodes: value.nodes,
+        edges: value.edges,
+        presentation: {
+          viewers: [],
+          links: [],
+          bindings: [],
+          annotations: [],
+        },
       },
     });
     expect(JSON.stringify(value)).not.toContain("callback");
@@ -68,60 +73,71 @@ describe("authored graph document", () => {
   it("round-trips the complete normalized durable graph payload", () => {
     const input: CreateSavedGraphRequest = {
       name: "Operator-agnostic graph",
-      nodes: [
-        {
-          id: "legacy-node",
-          operator_id: "unavailable.operator",
-          operator_version: 7,
-          config: {
-            nested: {
-              ordered: ["first", { value: 2 }],
-              arbitrary: true,
+      document: {
+        schema_version: 5,
+        nodes: [
+          {
+            id: "legacy-node",
+            operator_id: "unavailable.operator",
+            operator_version: 7,
+            config: {
+              nested: {
+                ordered: ["first", { value: 2 }],
+                arbitrary: true,
+              },
             },
+            input_plugs: [
+              { id: "plug-first", port: "items" },
+              { id: "plug-second", port: "items" },
+            ],
+            artifact_type_bindings: [
+              {
+                variable: "Z",
+                artifact_type: { id: "artifact.z", schema_version: 3 },
+              },
+              {
+                variable: "A",
+                artifact_type: { id: "artifact.a", schema_version: 1 },
+              },
+            ],
+            position: { x: 120, y: 240 },
+            layout: { width: 420, body_height: 180, appendix_height: 320 },
           },
-          input_plugs: [
-            { id: "plug-first", port: "items" },
-            { id: "plug-second", port: "items" },
-          ],
-          artifact_type_bindings: [
-            {
-              variable: "Z",
-              artifact_type: { id: "artifact.z", schema_version: 3 },
-            },
-            {
-              variable: "A",
-              artifact_type: { id: "artifact.a", schema_version: 1 },
-            },
-          ],
-          position: { x: 120, y: 240 },
-          layout: { width: 420, body_height: 180, appendix_height: 320 },
+        ],
+        edges: [
+          {
+            id: "legacy-edge",
+            from_node: "legacy-node",
+            from_port: "output",
+            to_node: "target-node",
+            to_port: "items",
+            to_plug: "plug-second",
+            enabled: false,
+            collection_mode: "map",
+            projection: { path: ["properties", "value"] },
+            conversion_path: [
+              { id: "convert-a", version: 1 },
+              { id: "convert-b", version: 2 },
+            ],
+            route_offset: { x: 18, y: -6 },
+          },
+        ],
+        presentation: {
+          viewers: [],
+          links: [],
+          bindings: [],
+          annotations: [],
         },
-      ],
-      edges: [
-        {
-          id: "legacy-edge",
-          from_node: "legacy-node",
-          from_port: "output",
-          to_node: "target-node",
-          to_port: "items",
-          to_plug: "plug-second",
-          enabled: false,
-          collection_mode: "map",
-          projection: { path: ["properties", "value"] },
-          conversion_path: [
-            { id: "convert-a", version: 1 },
-            { id: "convert-b", version: 2 },
-          ],
-          route_offset: { x: 18, y: -6 },
-        },
-      ],
+      },
     };
 
     const canonical = authoredGraphDocument(input);
 
     expect(createSavedGraphRequest(canonical)).toEqual({
       name: "Operator-agnostic graph",
-      nodes: [
+      document: {
+        schema_version: 5,
+        nodes: [
         {
           id: "legacy-node",
           operator_id: "unavailable.operator",
@@ -146,12 +162,12 @@ describe("authored graph document", () => {
               artifact_type: { id: "artifact.a", schema_version: 1 },
             },
           ],
-          plugin_release: null,
+          plugin_release_pin: null,
           position: { x: 120, y: 240 },
           layout: { width: 420, body_height: 180, appendix_height: 320 },
         },
-      ],
-      edges: [
+        ],
+        edges: [
         {
           id: "legacy-edge",
           from_node: "legacy-node",
@@ -168,12 +184,13 @@ describe("authored graph document", () => {
           ],
           route_offset: { x: 18, y: -6 },
         },
-      ],
-      presentation: {
-        viewers: [],
-        links: [],
-        bindings: [],
-        annotations: [],
+        ],
+        presentation: {
+          viewers: [],
+          links: [],
+          bindings: [],
+          annotations: [],
+        },
       },
     });
   });
@@ -210,16 +227,21 @@ describe("authored graph document", () => {
     };
     const input: CreateSavedGraphRequest = {
       name: "Adversarial graph",
-      nodes: [
-        runtimeNode as unknown as NonNullable<
-          CreateSavedGraphRequest["nodes"]
-        >[number],
-      ],
-      edges: [
-        runtimeEdge as unknown as NonNullable<
-          CreateSavedGraphRequest["edges"]
-        >[number],
-      ],
+      document: {
+        schema_version: 5,
+        nodes: [
+          runtimeNode as unknown as SavedGraphDocument["nodes"][number],
+        ],
+        edges: [
+          runtimeEdge as unknown as SavedGraphDocument["edges"][number],
+        ],
+        presentation: {
+          viewers: [],
+          links: [],
+          bindings: [],
+          annotations: [],
+        },
+      },
     };
 
     const canonical = authoredGraphDocument(input);
@@ -525,12 +547,12 @@ describe("authored graph document", () => {
   });
 
   it("moves only the selected exact Plugin release pin", () => {
-    const original = authoredGraphDocument({
+    const original = authoredGraphDocument(createSavedGraphRequest({
       name: "Pinned Plugins",
       nodes: [
         {
           ...node("source"),
-          plugin_release: {
+          plugin_release_pin: {
             scope: "system",
             slug: "notes",
             revision: 1,
@@ -538,7 +560,7 @@ describe("authored graph document", () => {
         },
         {
           ...node("target"),
-          plugin_release: {
+          plugin_release_pin: {
             scope: "workspace",
             slug: "notes",
             revision: 4,
@@ -546,7 +568,7 @@ describe("authored graph document", () => {
         },
       ],
       edges: [edge],
-    });
+    }));
 
     const upgraded = applyGraphCommand(original, {
       kind: "update_node_plugin_release",
@@ -554,12 +576,12 @@ describe("authored graph document", () => {
       plugin_release: { scope: "system", slug: "notes", revision: 3 },
     });
 
-    expect(original.nodes[0]?.plugin_release).toEqual({
+    expect(original.nodes[0]?.plugin_release_pin).toEqual({
       scope: "system",
       slug: "notes",
       revision: 1,
     });
-    expect(upgraded.nodes[0]?.plugin_release).toEqual({
+    expect(upgraded.nodes[0]?.plugin_release_pin).toEqual({
       scope: "system",
       slug: "notes",
       revision: 3,

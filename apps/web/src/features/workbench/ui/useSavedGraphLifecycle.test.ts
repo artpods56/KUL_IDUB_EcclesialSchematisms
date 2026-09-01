@@ -70,8 +70,17 @@ function savedGraph(
     name,
     created_at: "2026-07-17T12:00:00Z",
     updated_at: "2026-07-17T12:00:00Z",
-    nodes: [],
-    edges: [],
+    document: {
+      schema_version: 5,
+      nodes: [],
+      edges: [],
+      presentation: {
+        viewers: [],
+        links: [],
+        bindings: [],
+        annotations: [],
+      },
+    },
   };
 }
 
@@ -80,8 +89,8 @@ function savedGraphSummary(graph: SavedGraph): SavedGraphSummary {
     id: graph.id,
     revision: graph.revision,
     name: graph.name,
-    node_count: graph.nodes?.length ?? 0,
-    edge_count: graph.edges?.length ?? 0,
+    node_count: graph.document.nodes.length,
+    edge_count: graph.document.edges.length,
     updated_at: graph.updated_at,
   };
 }
@@ -206,11 +215,14 @@ describe("useSavedGraphLifecycle document ownership", () => {
     };
     const graph: SavedGraph = {
       ...savedGraph(GRAPH_A_ID, "Dragged graph", 3),
-      nodes: [node],
+      document: {
+        ...savedGraph(GRAPH_A_ID, "Dragged graph", 3).document,
+        nodes: [node],
+      },
     };
     const document = {
       name: "Dragged graph",
-      nodes: graph.nodes ?? [],
+      nodes: [node],
       edges: [],
     };
     api.createSavedGraph.mockResolvedValue(graph);
@@ -225,7 +237,9 @@ describe("useSavedGraphLifecycle document ownership", () => {
     expect(api.createSavedGraph).toHaveBeenCalledWith(
       "workspace-1",
       expect.objectContaining({
-        nodes: [expect.objectContaining({ position: finalPosition })],
+        document: expect.objectContaining({
+          nodes: [expect.objectContaining({ position: finalPosition })],
+        }),
       }),
     );
 
@@ -273,7 +287,16 @@ describe("useSavedGraphLifecycle document ownership", () => {
     };
     const graph = {
       ...savedGraph(GRAPH_A_ID, "Checkpoint", 3),
-      nodes: [checkpointNode],
+      document: {
+        ...savedGraph(GRAPH_A_ID, "Checkpoint", 3).document,
+        nodes: [
+          {
+            ...checkpointNode,
+            input_plugs: [],
+            artifact_type_bindings: [],
+          },
+        ],
+      },
     };
     api.getSavedGraph.mockResolvedValue(graph);
     const { options, callbacks } = lifecycleOptions(GRAPH_A_ID);
@@ -298,7 +321,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
       hook.result.current.syncFromCollaborativeHead(liveHead);
     });
 
-    expect(hook.result.current.activeGraph).toEqual({
+    expect(hook.result.current.activeGraph).toMatchObject({
       id: GRAPH_A_ID,
       revision: 3,
       nodes: [checkpointNode],
@@ -366,7 +389,16 @@ describe("useSavedGraphLifecycle document ownership", () => {
     };
     const graph = {
       ...savedGraph(GRAPH_A_ID, "Checkpoint", 1),
-      nodes: [checkpointNode],
+      document: {
+        ...savedGraph(GRAPH_A_ID, "Checkpoint", 1).document,
+        nodes: [
+          {
+            ...checkpointNode,
+            input_plugs: [],
+            artifact_type_bindings: [],
+          },
+        ],
+      },
     };
     const refreshNodeSecretStatuses = vi.fn().mockResolvedValue(true);
     api.getSavedGraph.mockResolvedValue(graph);
@@ -396,18 +428,18 @@ describe("useSavedGraphLifecycle document ownership", () => {
       });
     });
 
-    expect(hook.result.current.activeGraph).toEqual({
+    expect(hook.result.current.activeGraph).toMatchObject({
       id: GRAPH_A_ID,
       revision: 2,
       nodes: [checkpointedNode],
     });
     expect(refreshNodeSecretStatuses).toHaveBeenCalledOnce();
     expect(refreshNodeSecretStatuses).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         id: GRAPH_A_ID,
         revision: 2,
-        nodes: [checkpointedNode],
-      },
+        nodes: [expect.objectContaining(checkpointedNode)],
+      }),
       expect.any(Array),
     );
   });
@@ -499,16 +531,19 @@ describe("useSavedGraphLifecycle document ownership", () => {
     const finalPosition = { x: 240, y: 180 };
     const graph: SavedGraph = {
       ...savedGraph(GRAPH_A_ID, "Dragged graph", 3),
-      nodes: [{
-        id: "source",
-        operator_id: "test.source",
-        operator_version: 1,
-        config: { label: "source" },
-        input_plugs: [],
-        artifact_type_bindings: [],
-        position: finalPosition,
-        layout: null,
-      }],
+      document: {
+        ...savedGraph(GRAPH_A_ID, "Dragged graph", 3).document,
+        nodes: [{
+          id: "source",
+          operator_id: "test.source",
+          operator_version: 1,
+          config: { label: "source" },
+          input_plugs: [],
+          artifact_type_bindings: [],
+          position: finalPosition,
+          layout: null,
+        }],
+      },
     };
     api.getSavedGraph.mockResolvedValue(graph);
     const { options, callbacks } = lifecycleOptions(GRAPH_A_ID);
@@ -523,17 +558,20 @@ describe("useSavedGraphLifecycle document ownership", () => {
   it("opens a graph containing an unavailable operator as a preserved placeholder", async () => {
     const graph: SavedGraph = {
       ...savedGraph(GRAPH_A_ID, "Legacy graph"),
-      nodes: [
-        {
-          id: "legacy-node",
-          operator_id: "legacy.operator",
-          operator_version: 7,
-          config: { preserved: true },
-          position: { x: 20, y: 40 },
-          input_plugs: [],
-          artifact_type_bindings: [],
-        },
-      ],
+      document: {
+        ...savedGraph(GRAPH_A_ID, "Legacy graph").document,
+        nodes: [
+          {
+            id: "legacy-node",
+            operator_id: "legacy.operator",
+            operator_version: 7,
+            config: { preserved: true },
+            position: { x: 20, y: 40 },
+            input_plugs: [],
+            artifact_type_bindings: [],
+          },
+        ],
+      },
     };
     api.getSavedGraph.mockResolvedValue(graph);
     const { options, callbacks } = lifecycleOptions(GRAPH_A_ID);

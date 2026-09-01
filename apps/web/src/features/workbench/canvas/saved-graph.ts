@@ -198,7 +198,7 @@ function unavailableNodeSpec(savedNode: SavedGraphNode): NodeSpec {
 function persistedPluginReleasePin(
   savedNode: SavedGraphNode,
 ): WorkflowNodeData["pluginReleasePin"] {
-  const pin = savedNode.plugin_release;
+  const pin = savedNode.plugin_release_pin;
   return pin
     ? { scope: pin.scope, slug: pin.slug, revision: pin.revision }
     : null;
@@ -252,7 +252,7 @@ function sortedRecord(value: unknown): unknown {
 
 function requireArtifactTypeBindings(
   savedGraph: SavedGraph,
-  savedNode: NonNullable<SavedGraph["nodes"]>[number],
+  savedNode: SavedGraphNode,
   spec: NodeSpec,
   registry: NodeRegistry,
 ): WorkflowArtifactTypeBindings {
@@ -293,18 +293,19 @@ function requireArtifactTypeBindings(
 export function savedGraphFingerprint(
   graph: CreateSavedGraphRequest,
 ): string {
-  const presentation = graph.presentation ?? {
+  const presentation = graph.document.presentation ?? {
     viewers: [],
     links: [],
     bindings: [],
     annotations: [],
   };
   const normalized = {
-    ...graph,
-    nodes: [...(graph.nodes ?? [])].sort((left, right) =>
+    name: graph.name,
+    schema_version: graph.document.schema_version,
+    nodes: [...graph.document.nodes].sort((left, right) =>
       left.id.localeCompare(right.id),
     ),
-    edges: [...(graph.edges ?? [])]
+    edges: [...graph.document.edges]
       .map((edge) => ({
         ...edge,
         enabled: edge.enabled ?? true,
@@ -337,10 +338,11 @@ export function savedGraphExecutionFingerprint(
 ): string {
   const normalized = {
     name: graph.name,
-    nodes: [...(graph.nodes ?? [])].sort((left, right) =>
+    schema_version: graph.document.schema_version,
+    nodes: [...graph.document.nodes].sort((left, right) =>
       left.id.localeCompare(right.id),
     ),
-    edges: [...(graph.edges ?? [])]
+    edges: [...graph.document.edges]
       .map((edge) => ({
         ...edge,
         enabled: edge.enabled ?? true,
@@ -352,7 +354,7 @@ export function savedGraphExecutionFingerprint(
 
 function requireInputPlugs(
   savedGraph: SavedGraph,
-  savedNode: NonNullable<SavedGraph["nodes"]>[number],
+  savedNode: SavedGraphNode,
   spec: NodeSpec,
 ): NonNullable<typeof savedNode.input_plugs> {
   const inputPlugs = savedNode.input_plugs ?? [];
@@ -445,7 +447,7 @@ export function hydrateSavedGraph(
   registry: NodeRegistry,
   nodeRuns: readonly RunNodeResult[] = [],
 ): HydratedSavedGraph {
-  const savedEdges = savedGraph.edges ?? [];
+  const savedEdges = savedGraph.document.edges;
   const specs = new Map(
     registry.nodes.map((spec) => [
       scopedOperatorKey(
@@ -457,7 +459,7 @@ export function hydrateSavedGraph(
     ]),
   );
   const nodeIds = new Set<string>();
-  const nodes: SavedGraphWorkflowNode[] = (savedGraph.nodes ?? []).map((savedNode) => {
+  const nodes: SavedGraphWorkflowNode[] = savedGraph.document.nodes.map((savedNode) => {
     if (nodeIds.has(savedNode.id)) {
       throw new SavedGraphHydrationError(
         `Cannot open “${savedGraph.name}”: duplicate node id ${savedNode.id}`,
@@ -472,7 +474,7 @@ export function hydrateSavedGraph(
       scopedOperatorKey(
         savedNode.operator_id,
         savedNode.operator_version,
-        savedNode.plugin_release,
+        savedNode.plugin_release_pin,
       ),
     );
     let data: WorkflowNodeData;
@@ -527,7 +529,7 @@ export function hydrateSavedGraph(
   });
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const savedNodeById = new Map(
-    (savedGraph.nodes ?? []).map((savedNode) => [savedNode.id, savedNode]),
+    savedGraph.document.nodes.map((savedNode) => [savedNode.id, savedNode]),
   );
 
   for (const savedEdge of savedEdges) {

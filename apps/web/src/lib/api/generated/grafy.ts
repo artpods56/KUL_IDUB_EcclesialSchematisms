@@ -567,7 +567,8 @@ export interface paths {
         /** List Graph Executions */
         readonly get: operations["list_graph_executions_v1_workspaces__workspace_id__graphs__graph_id__executions_get"];
         readonly put?: never;
-        readonly post?: never;
+        /** Start Saved Graph Execution */
+        readonly post: operations["start_saved_graph_execution_v1_workspaces__workspace_id__graphs__graph_id__executions_post"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1383,13 +1384,9 @@ export interface components {
         };
         /** CreateSavedGraphRequest */
         readonly CreateSavedGraphRequest: {
-            /** Edges */
-            readonly edges?: readonly components["schemas"]["SavedGraphEdgeModel"][];
+            readonly document: components["schemas"]["SavedGraphDocument"];
             /** Name */
             readonly name: string;
-            /** Nodes */
-            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel"][];
-            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel"];
         };
         /** CreateTemplateRequest */
         readonly CreateTemplateRequest: {
@@ -2532,7 +2529,7 @@ export interface components {
          * PersonalAccessTokenScope
          * @enum {string}
          */
-        readonly PersonalAccessTokenScope: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution" | "publish_plugin" | "publish_module";
+        readonly PersonalAccessTokenScope: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution" | "publish_plugin" | "publish_module" | "manage_secrets";
         /** PinnedOutputRequest */
         readonly PinnedOutputRequest: {
             /** From Node */
@@ -2977,6 +2974,11 @@ export interface components {
             /** To Port */
             readonly to_port: string;
         };
+        /** SavedGraphExecutionRequest */
+        readonly SavedGraphExecutionRequest: {
+            /** Expected Revision */
+            readonly expected_revision: number;
+        };
         /** SavedGraphInputPlug */
         readonly SavedGraphInputPlug: {
             /** Id */
@@ -3095,8 +3097,7 @@ export interface components {
              * Format: date-time
              */
             readonly created_at: string;
-            /** Edges */
-            readonly edges?: readonly components["schemas"]["SavedGraphEdgeModel"][];
+            readonly document: components["schemas"]["SavedGraphDocument"];
             /**
              * Id
              * Format: uuid
@@ -3104,9 +3105,6 @@ export interface components {
             readonly id: string;
             /** Name */
             readonly name: string;
-            /** Nodes */
-            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel"][];
-            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel"];
             /** Revision */
             readonly revision: number;
             /**
@@ -3496,15 +3494,11 @@ export interface components {
         };
         /** UpdateSavedGraphRequest */
         readonly UpdateSavedGraphRequest: {
-            /** Edges */
-            readonly edges?: readonly components["schemas"]["SavedGraphEdgeModel"][];
+            readonly document: components["schemas"]["SavedGraphDocument"];
             /** Expected Revision */
             readonly expected_revision: number;
             /** Name */
             readonly name: string;
-            /** Nodes */
-            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel"][];
-            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel"];
         };
         /** UpdateTemplateMetadataRequest */
         readonly UpdateTemplateMetadataRequest: {
@@ -5373,6 +5367,55 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly start_saved_graph_execution_v1_workspaces__workspace_id__graphs__graph_id__executions_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: {
+                readonly "Idempotency-Key"?: string | null;
+            };
+            readonly path: {
+                readonly graph_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SavedGraphExecutionRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunExecutionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The durable pending execution queue is full */
+            readonly 429: {
+                headers: {
+                    /** @description Minimum delay before retrying, in seconds */
+                    readonly "Retry-After"?: number;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunExecutionQueueFullErrorResponse"];
                 };
             };
         };

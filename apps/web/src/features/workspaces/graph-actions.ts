@@ -14,14 +14,7 @@ export async function renameSavedGraphRemote(
   const saved = await getSavedGraph(workspaceId, graph.id);
   await updateSavedGraph(workspaceId, graph.id, {
     name,
-    nodes: saved.nodes ?? [],
-    edges: saved.edges ?? [],
-    presentation: saved.presentation ?? {
-      viewers: [],
-      links: [],
-      bindings: [],
-      annotations: [],
-    },
+    document: saved.document,
     expected_revision: saved.revision,
   });
 }

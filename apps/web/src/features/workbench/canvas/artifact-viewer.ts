@@ -1,6 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
 
-import type { CollaborativeHead, CreateSavedGraphRequest } from "@/lib/api";
+import type { CollaborativeHead, SavedGraphDocument } from "@/lib/api";
 
 import {
   annotationsFromPresentation,
@@ -29,7 +29,7 @@ import type {
 } from "./artifact-interactions";
 
 export type GraphPresentation = NonNullable<
-  CreateSavedGraphRequest["presentation"]
+  SavedGraphDocument["presentation"]
 >;
 
 export const ARTIFACT_VIEWER_NODE_TYPE = "grafyArtifactViewerNode";
