@@ -2,12 +2,12 @@ from grafy_core.artifacts import Artifact
 from grafy_core.runtime.persistence import InlineModelOutputWriter
 from grafy_core.runtime.resolvers import InlineModelResolver
 
-from grafy_plugin_llm import openai_compatible
+from grafy_plugin_llm import openai_compatible, prompt
 from grafy_plugin_llm.artifacts import COMPLETION, CompletionPayload
 from grafy_plugin_llm.declaration import LLM
 
 
-_NODE_MODULES = (openai_compatible,)
+_NODE_MODULES = (prompt, openai_compatible)
 
 LLM.register(
     Artifact(

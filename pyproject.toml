@@ -9,13 +9,7 @@ dependencies = [
     "grafy-client",
     "grafy-core",
     "grafy-persistence",
-    "grafy-plugin-arithmetic",
-    "grafy-plugin-image",
-    "grafy-plugin-prompt",
-    "grafy-plugin-schema",
-    "grafy-plugin-sequence",
-    "grafy-plugin-table",
-    "grafy-plugin-text",
+    "grafy-workbench",
     "grafy-storage",
 ]
 
@@ -34,21 +28,15 @@ members = [
     "libs/core",
     "libs/persistence",
     "libs/storage",
+    "libs/workbench",
     "apps/api",
 ]
 exclude = [
     "examples/plugin-notes",
-    "plugins/arithmetic",
     "plugins/gis",
-    "plugins/image",
     "plugins/llm",
     "plugins/ocr",
-    "plugins/prompt",
-    "plugins/schema",
-    "plugins/sequence",
     "plugins/sql",
-    "plugins/table",
-    "plugins/text",
 ]
 
 [tool.uv.sources]
@@ -56,18 +44,12 @@ grafy-api = { workspace = true }
 grafy-client = { workspace = true }
 grafy-core = { workspace = true }
 grafy-persistence = { workspace = true }
-grafy-plugin-arithmetic = { path = "plugins/arithmetic" }
-grafy-plugin-image = { path = "plugins/image" }
+grafy-storage = { workspace = true }
+grafy-workbench = { workspace = true }
 grafy-plugin-llm = { path = "plugins/llm" }
 grafy-plugin-ocr = { path = "plugins/ocr" }
-grafy-plugin-prompt = { path = "plugins/prompt" }
-grafy-plugin-schema = { path = "plugins/schema" }
 grafy-plugin-gis = { path = "plugins/gis" }
 grafy-plugin-sql = { path = "plugins/sql" }
-grafy-plugin-sequence = { path = "plugins/sequence" }
-grafy-plugin-table = { path = "plugins/table" }
-grafy-plugin-text = { path = "plugins/text" }
-grafy-storage = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -90,13 +72,7 @@ include = [
     "libs/core/*",
     "libs/persistence/*",
     "libs/storage/*",
-    "plugins/arithmetic/*",
-    "plugins/image/*",
-    "plugins/prompt/*",
-    "plugins/schema/*",
-    "plugins/text/*",
-    "plugins/sequence/*",
-    "plugins/table/*",
+    "libs/workbench/*",
     "plugins/llm/*",
     "plugins/ocr/*",
     "plugins/gis/*",
@@ -118,13 +94,7 @@ executionEnvironments = [
         "libs/core/src",
         "libs/persistence/src",
         "libs/storage/src",
-        "plugins/arithmetic/src",
-        "plugins/image/src",
-        "plugins/prompt/src",
-        "plugins/schema/src",
-        "plugins/text/src",
-        "plugins/sequence/src",
-        "plugins/table/src",
+        "libs/workbench/src",
         "plugins/llm/src",
         "plugins/ocr/src",
         "plugins/gis/src",

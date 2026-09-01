@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grafy-workbench"
+version = "0.1.0"
+requires-python = "==3.14.*"
+dependencies = [
+    "grafy-core",
+    "openpyxl>=3.1.5",
+    "pydantic",
+    "rapidfuzz>=3.14.3",
+    "Unidecode>=1.4.0",
+]
+
+[tool.uv.sources]
+grafy-core = { workspace = true }
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
