@@ -44,14 +44,17 @@ from grafy_api.plugin_admission import (
 )
 from grafy_api.plugin_egress import (
     PLUGIN_HTTP_PROXY_PORT,
+    PluginEgressAddressScope,
     PluginEgressBrokerPlan,
     PluginEgressBrokerPolicy,
     PluginEgressDestination,
     PluginEgressLimits,
     PluginEgressProtocol,
+    resolve_plugin_egress_destination,
     resolve_public_destination,
 )
 from grafy_api.network_policy import (
+    NetworkCaBundle,
     NetworkPolicy,
     resolve_http_egress_authority,
 )
@@ -133,6 +136,8 @@ class _SandboxKey:
     # sandbox created under older authority.
     network_profile_digest: str | None = None
     http_destinations: tuple[PluginEgressDestination, ...] = ()
+    http_address_scope: PluginEgressAddressScope = PluginEgressAddressScope.PUBLIC
+    network_ca_bundle_sha256: str | None = None
 
     def release_identity(self) -> tuple[object, ...]:
         return (
@@ -461,6 +466,8 @@ class DockerPluginRuntime(
         http_destinations: tuple[PluginEgressDestination, ...] = ()
         network_profile_digest: str | None = None
         egress_limits: PluginEgressLimits | None = None
+        http_address_scope = PluginEgressAddressScope.PUBLIC
+        network_ca_bundle: NetworkCaBundle | None = None
         requires_http_egress = (
             PluginRuntimeCapability.NETWORK_EGRESS in request.required_capabilities
         )
@@ -484,6 +491,9 @@ class DockerPluginRuntime(
             http_destinations = egress_resolution.origins
             network_profile_digest = egress_resolution.profile.policy_digest
             egress_limits = egress_resolution.profile.limits.broker_limits()
+            if not egress_resolution.profile.public_address_only:
+                http_address_scope = PluginEgressAddressScope.CURATED_RFC1918
+            network_ca_bundle = egress_resolution.profile.ca_bundle
         key = _SandboxKey(
             scope_id=scope,
             workspace_id=envelope.workspace_id,
@@ -497,6 +507,10 @@ class DockerPluginRuntime(
             postgresql_destination=postgresql_destination,
             network_profile_digest=network_profile_digest,
             http_destinations=http_destinations,
+            http_address_scope=http_address_scope,
+            network_ca_bundle_sha256=(
+                None if network_ca_bundle is None else network_ca_bundle.sha256
+            ),
         )
         try:
             sandbox = await self._sandbox_for(
@@ -505,6 +519,7 @@ class DockerPluginRuntime(
                 artifact,
                 invocation_root.parent,
                 egress_limits=egress_limits,
+                network_ca_bundle=network_ca_bundle,
             )
         except DockerPluginRuntimeError as exc:
             raise PluginGuestRunError(
@@ -682,6 +697,7 @@ class DockerPluginRuntime(
         scratch_root: Path,
         *,
         egress_limits: PluginEgressLimits | None = None,
+        network_ca_bundle: NetworkCaBundle | None = None,
     ) -> _Sandbox:
         async with self._lock:
             existing = self._sandboxes.get(key)
@@ -706,6 +722,7 @@ class DockerPluginRuntime(
                     artifact,
                     scratch_root,
                     egress_limits=egress_limits,
+                    network_ca_bundle=network_ca_bundle,
                 )
                 self._sandboxes[key] = sandbox
                 return sandbox
@@ -835,6 +852,7 @@ class DockerPluginRuntime(
         scratch_root: Path,
         *,
         egress_limits: PluginEgressLimits | None = None,
+        network_ca_bundle: NetworkCaBundle | None = None,
     ) -> _Sandbox:
         name = (
             f"grafy-plugin-{str(key.scope_id.value)[:8]}-"
@@ -866,6 +884,25 @@ class DockerPluginRuntime(
         broker_container_id: str | None = None
         sandbox_container_id: str | None = None
         network_arguments: tuple[str, ...] = ("--network=none",)
+        ca_mount_arguments: tuple[str, ...] = ()
+        if (network_ca_bundle is None) != (key.network_ca_bundle_sha256 is None):
+            raise DockerPluginRuntimeError("Plugin network CA identity is inconsistent")
+        if network_ca_bundle is not None:
+            if network_ca_bundle.sha256 != key.network_ca_bundle_sha256:
+                raise DockerPluginRuntimeError(
+                    "Plugin network CA content identity changed"
+                )
+            scratch_root.mkdir(parents=True, exist_ok=True)
+            staged_ca = scratch_root / f"network-ca-{network_ca_bundle.sha256}.pem"
+            staged_ca.write_bytes(network_ca_bundle.content)
+            staged_ca.chmod(0o444)
+            ca_mount_arguments = (
+                "--mount",
+                (
+                    f"type=bind,source={staged_ca},"
+                    "target=/run/grafy/network-ca.pem,readonly"
+                ),
+            )
         if requires_http_egress or requires_postgresql_egress:
             broker_image = self._egress_policy.broker_image
             if broker_image is None:
@@ -878,7 +915,10 @@ class DockerPluginRuntime(
                     await asyncio.wait_for(
                         asyncio.gather(
                             *(
-                                resolve_public_destination(destination)
+                                resolve_plugin_egress_destination(
+                                    destination,
+                                    address_scope=key.http_address_scope,
+                                )
                                 for destination in key.http_destinations
                             )
                         ),
@@ -1046,6 +1086,7 @@ class DockerPluginRuntime(
             name,
             "--pull=never",
             *network_arguments,
+            *ca_mount_arguments,
             "--read-only",
             "--user",
             "65532:65532",
@@ -1164,6 +1205,11 @@ class DockerPluginRuntime(
                 "--env",
                 "no_proxy=",
             )
+            if sandbox.key.network_ca_bundle_sha256 is not None:
+                environment += (
+                    "--env",
+                    "SSL_CERT_FILE=/run/grafy/network-ca.pem",
+                )
         return environment
 
     async def _remove_sandbox_resources(self, sandbox: _Sandbox) -> None:
@@ -1335,6 +1381,8 @@ def _sandbox_key_sha256(key: _SandboxKey) -> str:
             }
         ),
         "network_profile_digest": key.network_profile_digest,
+        "http_address_scope": key.http_address_scope.value,
+        "network_ca_bundle_sha256": key.network_ca_bundle_sha256,
         "http_destinations": [
             {
                 "protocol": destination.protocol.value,

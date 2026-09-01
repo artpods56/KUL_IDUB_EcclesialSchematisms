@@ -4,7 +4,7 @@
   manifest loading, configured/curated execution); publication and
   agent-authoring planes are modeled but not yet enforced
 - **Audience:** Grafy maintainers and implementation agents
-- **Last updated:** 2026-08-25
+- **Last updated:** 2026-09-01
 - **Scope:** Hosted coding-agent authoring, Plugin publication, and isolated
   Plugin execution
 - **Related architecture:**
@@ -99,6 +99,9 @@ This feature must:
   hard-coding operator identities in the API runtime.
 - Support public OpenAI-compatible endpoints and other configured public APIs
   without an environment change for every origin.
+- Support deployment-owned HTTPS services on exact IPv4 RFC1918 origins only
+  through an explicitly assigned curated profile and optional immutable CA
+  trust bundle.
 - Preserve exact DNS-name, port, and numeric-address enforcement in isolated
   Plugin execution.
 - Make requested, granted, and effective network authority independently
@@ -116,7 +119,10 @@ This feature must:
 
 The first implementation will not:
 
-- Permit private, loopback, link-local, or cloud metadata destinations.
+- Permit loopback, link-local, cloud metadata, CGNAT, multicast, unspecified,
+  reserved, or IPv6 ULA destinations.
+- Permit dynamic private destinations or private access outside an exact
+  deployment-owned curated origin.
 - Inspect paths or HTTP methods inside end-to-end HTTPS CONNECT tunnels.
 - Add TLS interception.
 - Make credential-bearing or presigned URLs safe to store in graph config.
@@ -128,8 +134,8 @@ The first implementation will not:
 - Let Workspace owners or graph authors exceed the deployment administrator's
   network ceiling.
 
-Private-network profiles and host-mediated HTTP are described as follow-up
-extensions, not first-release requirements.
+General private-network profiles, caller-selected CIDRs, and host-mediated HTTP
+remain follow-up extensions.
 
 ## 5. Terminology
 
@@ -277,6 +283,13 @@ allowed_origins = [
   "https://data.example.org:443",
 ]
 
+[profiles.plugin-execution.internal-provider]
+mode = "curated"
+public_address_only = false
+https_only = true
+allowed_origins = ["https://provider.internal.example:8443"]
+ca_bundle_path = "/etc/grafy/internal-provider-ca.pem"
+
 [profiles.publication.dependencies]
 mode = "dependencies"
 public_address_only = true
@@ -336,7 +349,16 @@ Requirements:
   `dynamic_destinations=true` and an explicit deployment assignment.
 - Assigning `open-public` to a configured-only node does not widen that node's
   request; it still receives only its configured origins.
-- All first-release modes reject non-public address space.
+- Every mode rejects non-public address space by default. Only a non-empty,
+  exact `curated` Plugin-execution profile may opt into public plus IPv4
+  RFC1918 resolution with `public_address_only = false`.
+- An exact curated profile may provide `ca_bundle_path`. Grafy accepts only
+  complete, valid X.509 `CERTIFICATE` PEM blocks, captures their bounded bytes
+  and content digest when loading policy, includes that digest in profile and
+  sandbox identity, and mounts the bundle read-only as the guest's
+  `SSL_CERT_FILE`. The file is a complete trust bundle because it replaces the
+  guest's default trust file; private keys and every other PEM block are
+  rejected before a sandbox can be created.
 - Remote configured destinations require HTTPS. Plain HTTP remains outside the
   production profile contract.
 
@@ -552,8 +574,10 @@ default must not exceed global live-sandbox capacity.
 The API resolves each effective origin before starting its dedicated broker:
 
 1. Resolve the exact DNS name once with a bounded timeout.
-2. Reject the complete answer if any address is private, loopback, link-local,
-   multicast, reserved, unspecified, or otherwise non-global.
+2. Under the default `public` address scope, reject the complete answer if any
+   address is non-public. Under the explicit `curated-rfc1918` scope, accept
+   public addresses and IPv4 RFC1918 only; still reject loopback, link-local,
+   multicast, reserved, unspecified, CGNAT, IPv6 ULA, and mixed unsafe answers.
 3. Give the broker only the validated numeric addresses and original origin.
 4. Keep the Plugin container on an internal network.
 5. Keep the broker as the only container attached to both internal and
@@ -993,8 +1017,12 @@ runtime.
 - [ ] Cross-origin redirects are denied unless the target is independently
       effective.
 - [ ] HTTP proxy environment variables cannot be bypassed through `NO_PROXY`.
-- [ ] Private, loopback, link-local, reserved, and mixed DNS answers are
-      rejected before connection.
+- [ ] Public profiles reject private, loopback, link-local, reserved, and mixed
+      DNS answers before connection.
+- [ ] Exact private curated profiles admit IPv4 RFC1918 only, and the broker
+      independently revalidates that scope from numeric addresses.
+- [ ] A curated CA bundle is mounted read-only and its content digest changes
+      the sandbox identity.
 - [ ] The broker connects only to an already validated numeric address.
 - [ ] Policy changes cannot reuse a sandbox created under an older digest.
 
@@ -1087,8 +1115,8 @@ Existing suites to extend include:
 
 The implementation may proceed without resolving these extensions:
 
-1. **Private curated profiles:** exact private DNS origins plus explicit CIDR
-   constraints for self-hosted services.
+1. **Broader private profiles:** explicit deployment CIDR constraints, IPv6
+   ULA, and policy for private ranges beyond exact IPv4 RFC1918 origins.
 2. **Wildcard domains:** whether deployment-managed suffix matching earns its
    complexity over named exact-origin domain sets.
 3. **Workspace-delegated grants:** whether a deployment administrator may let

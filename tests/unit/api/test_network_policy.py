@@ -1,6 +1,7 @@
 """Deployment-owned network access profiles, assignments, and resolution."""
 
 from pathlib import Path
+import re
 from uuid import UUID
 
 import pytest
@@ -14,6 +15,7 @@ from grafy_core.domain.plugin_releases import (
 from grafy_api.network_policy import (
     NetworkAccessPlane,
     NetworkAccessProfile,
+    NetworkCaBundle,
     NetworkPolicy,
     NetworkPolicyError,
     NetworkProfileAssignment,
@@ -32,6 +34,16 @@ from grafy_api.plugin_egress import PluginEgressDestination, PluginEgressProtoco
 
 WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000000993")
 SLUG = "external.llm"
+
+
+def _e2e_ca_bytes() -> bytes:
+    return (
+        Path(__file__).resolve().parents[3]
+        / "infra"
+        / "e2e"
+        / "tls"
+        / "ca.crt"
+    ).read_bytes()
 
 
 def _write_manifest(tmp_path: Path, text: str) -> Path:
@@ -441,14 +453,153 @@ def test_workspace_assignments_require_workspace_scope() -> None:
         )
 
 
-def test_profiles_reject_non_public_address_space() -> None:
-    with pytest.raises(NetworkPolicyError, match="public address space"):
+def test_curated_profile_may_allow_rfc1918_for_exact_origins() -> None:
+    destination = PluginEgressDestination.parse(
+        "https://openai-e2e:8443"
+    )
+
+    profile = NetworkAccessProfile(
+        name="e2e-provider",
+        plane=NetworkAccessPlane.PLUGIN_EXECUTION,
+        mode=NetworkProfileMode.CURATED,
+        public_address_only=False,
+        allowed_origins=(destination,),
+    )
+
+    assert profile.public_address_only is False
+    assert profile.allowed_origins == (destination,)
+
+
+@pytest.mark.parametrize(
+    "mode, origins",
+    [
+        (NetworkProfileMode.CONFIGURED_PUBLIC, ("https://openai-e2e:8443",)),
+        (NetworkProfileMode.OPEN_PUBLIC, ("https://openai-e2e:8443",)),
+        (NetworkProfileMode.CURATED, ()),
+    ],
+)
+def test_non_public_address_space_requires_exact_curated_origins(
+    mode: NetworkProfileMode,
+    origins: tuple[str, ...],
+) -> None:
+    with pytest.raises(NetworkPolicyError, match="exact curated"):
         NetworkAccessProfile(
             name="lan",
             plane=NetworkAccessPlane.PLUGIN_EXECUTION,
-            mode=NetworkProfileMode.CURATED,
+            mode=mode,
             public_address_only=False,
+            allowed_origins=tuple(
+                PluginEgressDestination.parse(origin) for origin in origins
+            ),
         )
+
+
+def test_exact_curated_profile_owns_ca_bundle_by_content(
+    tmp_path: Path,
+) -> None:
+    ca_path = tmp_path / "provider-ca.crt"
+    ca_path.write_bytes(_e2e_ca_bytes())
+    destination = PluginEgressDestination.parse("https://openai-e2e:8443")
+
+    bundle = NetworkCaBundle.load(ca_path)
+    profile = NetworkAccessProfile(
+        name="e2e-provider",
+        plane=NetworkAccessPlane.PLUGIN_EXECUTION,
+        mode=NetworkProfileMode.CURATED,
+        public_address_only=False,
+        allowed_origins=(destination,),
+        ca_bundle=bundle,
+    )
+
+    assert profile.ca_bundle is not None
+    assert profile.ca_bundle.path == ca_path
+    assert profile.ca_bundle.sha256 == (
+        "269d1be5ad14cbc96a0c668deb44776d47098beacf44c5bec07b2cb44191ecb9"
+    )
+
+    with pytest.raises(NetworkPolicyError, match="exact curated"):
+        NetworkAccessProfile(
+            name="configured-public",
+            plane=NetworkAccessPlane.PLUGIN_EXECUTION,
+            mode=NetworkProfileMode.CONFIGURED_PUBLIC,
+            allowed_origins=(destination,),
+            ca_bundle=bundle,
+        )
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        b"-----BEGIN PRIVATE KEY-----\nc2VjcmV0\n-----END PRIVATE KEY-----\n",
+        b"-----BEGIN PUBLIC KEY-----\ndW5rbm93bg==\n-----END PUBLIC KEY-----\n",
+        b"unexpected trailing content\n",
+        b"-----BEGIN CERTIFICATE-----\nbWFsZm9ybWVk\n",
+    ],
+)
+def test_ca_bundle_rejects_any_content_outside_certificates(
+    tmp_path: Path,
+    suffix: bytes,
+) -> None:
+    ca_path = tmp_path / "unsafe-ca.pem"
+    ca_path.write_bytes(_e2e_ca_bytes() + suffix)
+
+    with pytest.raises(NetworkPolicyError, match="certificate PEM blocks only"):
+        NetworkCaBundle.load(ca_path)
+
+
+def test_ca_bundle_accepts_multiple_certificates_and_whitespace(
+    tmp_path: Path,
+) -> None:
+    ca_path = tmp_path / "ca-chain.pem"
+    ca_path.write_bytes(b"\n\t" + _e2e_ca_bytes() + b"\n" + _e2e_ca_bytes())
+
+    bundle = NetworkCaBundle.load(ca_path)
+
+    assert bundle.content.count(b"-----BEGIN CERTIFICATE-----") == 2
+
+
+def test_manifest_loads_ca_bundle_only_for_exact_curated_profile(
+    tmp_path: Path,
+) -> None:
+    ca_path = tmp_path / "provider-ca.crt"
+    ca_path.write_bytes(_e2e_ca_bytes())
+    manifest = _write_manifest(
+        tmp_path,
+        f'''\
+schema_version = 1
+
+[profiles.plugin-execution.e2e-provider]
+mode = "curated"
+public_address_only = false
+allowed_origins = ["https://openai-e2e:8443"]
+ca_bundle_path = "{ca_path}"
+''',
+    )
+
+    profile = load_network_policy_manifest(manifest).profile(
+        NetworkAccessPlane.PLUGIN_EXECUTION,
+        "e2e-provider",
+    )
+
+    assert profile is not None
+    assert profile.ca_bundle is not None
+    assert profile.ca_bundle.path == ca_path
+
+    resolution = _resolve(
+        _policy(profile, slug=SLUG),
+        _contract(("base_url",)),
+        {"base_url": "https://openai-e2e:8443/v1"},
+    )
+    rendered = render_effective_network_policy(
+        resolution,
+        plugin_scope=PluginReleaseScope.SYSTEM,
+        slug=SLUG,
+        revision=1,
+        node_operator="llm.openai_compatible.chat_completion@1",
+    )
+    assert "Address policy: public and exact curated RFC1918" in rendered
+    assert f"TLS trust bundle: sha256:{profile.ca_bundle.sha256}" in rendered
+    assert str(ca_path) not in rendered
 
 
 def test_legacy_translation_keeps_historical_authority() -> None:
@@ -617,8 +768,6 @@ def test_documentation_manifest_example_stays_valid(
 ) -> None:
     """The README manifest example is a contract; it must parse here."""
 
-    import re
-
     readme = (
         Path(__file__).resolve().parents[3]
         / "docs"
@@ -630,8 +779,16 @@ def test_documentation_manifest_example_stays_valid(
     match = re.search(r"```toml\n(schema_version = 1.*?)```", text, re.DOTALL)
     assert match is not None, "README lost its manifest example"
 
+    ca_bundle = tmp_path / "internal-provider-ca.pem"
+    ca_bundle.write_bytes(_e2e_ca_bytes())
     manifest = tmp_path / "readme-example.toml"
-    manifest.write_text(match.group(1), encoding="utf-8")
+    manifest.write_text(
+        match.group(1).replace(
+            "/etc/grafy/internal-provider-ca.pem",
+            str(ca_bundle),
+        ),
+        encoding="utf-8",
+    )
     policy = load_network_policy_manifest(manifest)
 
     assert policy.profile(

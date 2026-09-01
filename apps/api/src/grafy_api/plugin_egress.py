@@ -8,13 +8,13 @@ import re
 import socket
 from dataclasses import dataclass
 from enum import StrEnum
-from ipaddress import IPv4Address, IPv6Address, ip_address
+from ipaddress import IPv4Address, IPv6Address, IPv4Network, ip_address
 from urllib.parse import urlsplit
 
 
 _PINNED_IMAGE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
-PLUGIN_EGRESS_BROKER_CONFIG_VERSION = 1
+PLUGIN_EGRESS_BROKER_CONFIG_VERSION = 2
 PLUGIN_HTTP_PROXY_PORT = 3128
 PLUGIN_EGRESS_CONNECTION_LIMIT = 128
 PLUGIN_EGRESS_MAX_HEADER_BYTES = 64 * 1_024
@@ -28,6 +28,13 @@ class PluginEgressProtocol(StrEnum):
     HTTP = "http"
     HTTPS = "https"
     POSTGRESQL = "postgresql"
+
+
+class PluginEgressAddressScope(StrEnum):
+    """Numeric address classes one already-authorized destination may use."""
+
+    PUBLIC = "public"
+    CURATED_RFC1918 = "curated-rfc1918"
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +250,7 @@ class PluginEgressBrokerPolicy:
 class ResolvedPluginEgressDestination:
     destination: PluginEgressDestination
     addresses: tuple[IPv4Address | IPv6Address, ...]
+    address_scope: PluginEgressAddressScope = PluginEgressAddressScope.PUBLIC
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,6 +365,7 @@ class PluginEgressBrokerPlan:
                 "protocol": destination.protocol.value,
                 "host": destination.host,
                 "port": destination.port,
+                "address_scope": resolved.address_scope.value,
                 "connect_addresses": [
                     str(address) for address in resolved.addresses
                 ],
@@ -396,6 +405,17 @@ class PluginEgressBrokerPlan:
 async def resolve_public_destination(
     destination: PluginEgressDestination,
 ) -> ResolvedPluginEgressDestination:
+    return await resolve_plugin_egress_destination(
+        destination,
+        address_scope=PluginEgressAddressScope.PUBLIC,
+    )
+
+
+async def resolve_plugin_egress_destination(
+    destination: PluginEgressDestination,
+    *,
+    address_scope: PluginEgressAddressScope,
+) -> ResolvedPluginEgressDestination:
     """Resolve once, reject every unsafe answer, and return numeric addresses.
 
     A broker must connect one returned numeric address directly. Resolving the
@@ -418,14 +438,18 @@ async def resolve_public_destination(
     )
     if not addresses:
         raise OSError("Plugin egress destination returned no DNS addresses")
-    if any(not _is_public_address(address) for address in addresses):
+    allowed = _is_public_address
+    if address_scope is PluginEgressAddressScope.CURATED_RFC1918:
+        allowed = _is_public_or_rfc1918_address
+    if any(not allowed(address) for address in addresses):
         raise PermissionError(
-            "Plugin egress DNS returned a private, loopback, link-local, or "
-            "reserved address"
+            "Plugin egress DNS returned an address outside its explicit "
+            f"{address_scope.value} scope"
         )
     return ResolvedPluginEgressDestination(
         destination=destination,
         addresses=addresses,
+        address_scope=address_scope,
     )
 
 
@@ -441,9 +465,24 @@ def _is_public_address(address: IPv4Address | IPv6Address) -> bool:
     )
 
 
+_RFC1918_NETWORKS = (
+    IPv4Network("10.0.0.0/8"),
+    IPv4Network("172.16.0.0/12"),
+    IPv4Network("192.168.0.0/16"),
+)
+
+
+def _is_public_or_rfc1918_address(address: IPv4Address | IPv6Address) -> bool:
+    return _is_public_address(address) or (
+        isinstance(address, IPv4Address)
+        and any(address in network for network in _RFC1918_NETWORKS)
+    )
+
+
 __all__ = [
     "PLUGIN_EGRESS_BROKER_CONFIG_VERSION",
     "PLUGIN_HTTP_PROXY_PORT",
+    "PluginEgressAddressScope",
     "PluginEgressBrokerPolicy",
     "PluginEgressBrokerPlan",
     "PluginEgressDestination",
@@ -452,4 +491,5 @@ __all__ = [
     "PluginPostgresqlRelay",
     "ResolvedPluginEgressDestination",
     "resolve_public_destination",
+    "resolve_plugin_egress_destination",
 ]

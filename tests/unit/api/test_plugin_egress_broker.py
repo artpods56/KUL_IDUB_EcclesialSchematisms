@@ -7,6 +7,7 @@ from typing import cast
 import pytest
 
 from grafy_api.plugin_egress import (
+    PluginEgressAddressScope,
     PluginEgressBrokerPlan,
     PluginEgressDestination,
     ResolvedPluginEgressDestination,
@@ -73,6 +74,14 @@ def test_broker_loads_only_exact_public_numeric_policy(tmp_path: Path) -> None:
         ),
     ).policy_sha256
 
+    content = policy_path.read_text(encoding="utf-8")
+    policy_path.write_text(
+        content.replace('"config_version":2', '"config_version":1'),
+        encoding="utf-8",
+    )
+    with pytest.raises(BrokerConfigError, match="version is unsupported"):
+        load_policy(policy_path)
+
 
 def test_broker_rejects_private_or_hostname_connect_targets(tmp_path: Path) -> None:
     policy_path = tmp_path / "policy.json"
@@ -83,7 +92,7 @@ def test_broker_rejects_private_or_hostname_connect_targets(tmp_path: Path) -> N
     content = policy_path.read_text(encoding="utf-8")
 
     policy_path.write_text(content.replace("8.8.8.8", "127.0.0.1"), encoding="utf-8")
-    with pytest.raises(BrokerConfigError, match="must be public"):
+    with pytest.raises(BrokerConfigError, match="outside its public scope"):
         load_policy(policy_path)
 
     policy_path.write_text(
@@ -91,6 +100,40 @@ def test_broker_rejects_private_or_hostname_connect_targets(tmp_path: Path) -> N
         encoding="utf-8",
     )
     with pytest.raises(BrokerConfigError, match="must be numeric"):
+        load_policy(policy_path)
+
+
+def test_broker_accepts_rfc1918_only_with_explicit_curated_scope(
+    tmp_path: Path,
+) -> None:
+    destination = PluginEgressDestination.parse("https://openai-e2e:8443")
+    plan = PluginEgressBrokerPlan.from_resolved(
+        broker_image=_BROKER_IMAGE,
+        sandbox_key_sha256="b" * 64,
+        destinations=(
+            ResolvedPluginEgressDestination(
+                destination,
+                (ip_address("172.18.0.5"),),
+                PluginEgressAddressScope.CURATED_RFC1918,
+            ),
+        ),
+    )
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_bytes(plan.canonical_json_bytes())
+
+    policy = load_policy(policy_path)
+
+    assert policy.http_destinations[0].connect_addresses == (
+        ip_address("172.18.0.5"),
+    )
+    assert policy.http_destinations[0].address_scope == "curated-rfc1918"
+
+    content = policy_path.read_text(encoding="utf-8")
+    policy_path.write_text(
+        content.replace("curated-rfc1918", "public"),
+        encoding="utf-8",
+    )
+    with pytest.raises(BrokerConfigError, match="outside its public scope"):
         load_policy(policy_path)
 
 

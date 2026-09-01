@@ -7,7 +7,7 @@ import base64
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
-from ipaddress import IPv4Address, IPv6Address, ip_address
+from ipaddress import IPv4Address, IPv6Address, IPv4Network, ip_address
 import json
 import os
 from pathlib import Path
@@ -48,6 +48,7 @@ class BrokerDestination:
     host: str
     port: int
     connect_addresses: tuple[IPv4Address | IPv6Address, ...]
+    address_scope: str = "public"
     listen_port: int | None = None
 
 
@@ -78,7 +79,7 @@ def load_policy_bytes(content: bytes) -> BrokerPolicy:
         {"config_version", "identity", "http_proxy", "postgresql_relays", "limits"},
         "policy",
     )
-    if document["config_version"] != 1:
+    if document["config_version"] != 2:
         raise BrokerConfigError("Broker policy config version is unsupported")
 
     identity = _mapping(document["identity"], "identity")
@@ -222,15 +223,26 @@ def _destination(
     relay: bool,
 ) -> BrokerDestination:
     parsed = _mapping(value, "destination")
-    expected = {"protocol", "host", "port", "connect_addresses"}
+    expected = {
+        "protocol",
+        "host",
+        "port",
+        "address_scope",
+        "connect_addresses",
+    }
     if relay:
         expected.add("listen_port")
     _exact_keys(parsed, expected, "destination")
     protocol = parsed["protocol"]
     host = parsed["host"]
+    address_scope = parsed["address_scope"]
     addresses_value_raw = parsed["connect_addresses"]
     if not isinstance(protocol, str) or protocol not in expected_protocols:
         raise BrokerConfigError("Broker destination protocol is invalid")
+    if address_scope not in {"public", "curated-rfc1918"}:
+        raise BrokerConfigError("Broker destination address scope is invalid")
+    if relay and address_scope != "public":
+        raise BrokerConfigError("Broker relay address scope must be public")
     if (
         not isinstance(host, str)
         or host == ""
@@ -256,8 +268,10 @@ def _destination(
             address = ip_address(address_value)
         except ValueError as exc:
             raise BrokerConfigError("Broker connect address must be numeric") from exc
-        if not address.is_global:
-            raise BrokerConfigError("Broker connect address must be public")
+        if not _address_in_scope(address, cast(str, address_scope)):
+            raise BrokerConfigError(
+                f"Broker connect address is outside its {address_scope} scope"
+            )
         addresses.append(address)
     if len(addresses) != len(set(addresses)):
         raise BrokerConfigError("Broker connect addresses must be unique")
@@ -265,11 +279,39 @@ def _destination(
         protocol=protocol,
         host=host,
         port=_port(parsed["port"], "destination port"),
+        address_scope=cast(str, address_scope),
         connect_addresses=tuple(addresses),
         listen_port=(
             _port(parsed["listen_port"], "relay listen port") if relay else None
         ),
     )
+
+
+_RFC1918_NETWORKS = (
+    IPv4Network("10.0.0.0/8"),
+    IPv4Network("172.16.0.0/12"),
+    IPv4Network("192.168.0.0/16"),
+)
+
+
+def _address_in_scope(
+    address: IPv4Address | IPv6Address,
+    scope: str,
+) -> bool:
+    public = (
+        address.is_global
+        and not address.is_private
+        and not address.is_loopback
+        and not address.is_link_local
+        and not address.is_multicast
+        and not address.is_reserved
+        and not address.is_unspecified
+    )
+    if public:
+        return True
+    return scope == "curated-rfc1918" and isinstance(
+        address, IPv4Address
+    ) and any(address in network for network in _RFC1918_NETWORKS)
 
 
 async def _open_numeric_connection(

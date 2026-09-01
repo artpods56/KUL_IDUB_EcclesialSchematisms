@@ -11,6 +11,13 @@ from grafy_api.settings import Settings
 from grafy_api.plugin_egress import PluginEgressProtocol
 
 
+@pytest.fixture(autouse=True)
+def isolate_network_policy_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep legacy-policy tests independent from deployment configuration."""
+
+    monkeypatch.delenv("GRAFY_NETWORK_POLICY_MANIFEST", raising=False)
+
+
 def test_default_workspace_does_not_reuse_legacy_data(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -191,6 +198,7 @@ def test_distinct_plugin_release_limit_cannot_exceed_live_sandboxes() -> None:
 
 def test_plugin_egress_requires_a_pinned_broker_and_exact_destinations() -> None:
     settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
         plugin_egress_broker_image=(
             "registry.example/grafy-egress@sha256:" + "a" * 64
         ),
@@ -236,7 +244,7 @@ def test_plugin_egress_partial_or_mistyped_configuration_fails_closed(
     values: dict[str, object],
 ) -> None:
     with pytest.raises(ValidationError):
-        Settings.model_validate(values)
+        Settings(_env_file=None, **values)  # pyright: ignore[reportCallIssue]
 
 
 def test_oidc_signing_algorithms_are_strictly_allowlisted() -> None:

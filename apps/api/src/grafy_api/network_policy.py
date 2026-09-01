@@ -18,6 +18,7 @@ from uuid import UUID
 
 import tomllib
 
+from cryptography import x509
 from grafy_core.domain.plugin_releases import PluginNodeContract
 from grafy_core.domain.plugin_identity import PluginReleaseScope
 
@@ -82,6 +83,12 @@ PLANE_MODES: dict[NetworkAccessPlane, frozenset[NetworkProfileMode]] = {
 DISABLED_MODES = frozenset({NetworkProfileMode.DISABLED, NetworkProfileMode.OFFLINE})
 
 _PROFILE_NAME = re.compile(r"^[a-z][a-z0-9-]*$")
+_MAX_CA_BUNDLE_BYTES = 1_048_576
+_CERTIFICATE_PEM_BLOCK = re.compile(
+    rb"-----BEGIN CERTIFICATE-----\r?\n"
+    rb"(?:[A-Za-z0-9+/=]+\r?\n)+"
+    rb"-----END CERTIFICATE-----"
+)
 
 _DEFAULT_PYTHON_PACKAGE_ORIGINS = tuple(
     sorted(
@@ -106,6 +113,64 @@ class NetworkRejectionReason(StrEnum):
     SANDBOX_VARIANT_LIMIT_EXCEEDED = "network_sandbox_variant_limit_exceeded"
     BROKER_UNAVAILABLE = "network_broker_unavailable"
     DESTINATION_DENIED = "network_destination_denied"
+
+
+@dataclass(frozen=True, slots=True)
+class NetworkCaBundle:
+    """Deployment-owned CA trust captured immutably by content identity."""
+
+    path: Path = field(repr=False)
+    content: bytes = field(repr=False)
+    sha256: str
+
+    def __post_init__(self) -> None:
+        if not self.path.is_absolute() or self.sha256 != sha256(
+            self.content
+        ).hexdigest():
+            raise NetworkPolicyError("Network CA bundle identity is invalid")
+        _validate_ca_bundle_content(self.content)
+
+    @classmethod
+    def load(cls, path: Path) -> "NetworkCaBundle":
+        try:
+            if not path.is_absolute() or path.is_symlink() or not path.is_file():
+                raise OSError
+            content = path.read_bytes()
+        except OSError:
+            raise NetworkPolicyError(
+                "Network CA bundle is not a readable absolute regular file"
+            ) from None
+        return cls(
+            path=path,
+            content=content,
+            sha256=sha256(content).hexdigest(),
+        )
+
+
+def _validate_ca_bundle_content(content: bytes) -> None:
+    if not content or len(content) > _MAX_CA_BUNDLE_BYTES:
+        raise NetworkPolicyError(
+            "Network CA bundle must contain certificate PEM blocks only"
+        )
+    offset = 0
+    certificate_count = 0
+    for match in _CERTIFICATE_PEM_BLOCK.finditer(content):
+        if content[offset:match.start()].strip():
+            raise NetworkPolicyError(
+                "Network CA bundle must contain certificate PEM blocks only"
+            )
+        try:
+            x509.load_pem_x509_certificate(match.group())
+        except ValueError:
+            raise NetworkPolicyError(
+                "Network CA bundle must contain valid certificate PEM blocks only"
+            ) from None
+        offset = match.end()
+        certificate_count += 1
+    if certificate_count == 0 or content[offset:].strip():
+        raise NetworkPolicyError(
+            "Network CA bundle must contain certificate PEM blocks only"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +236,7 @@ class NetworkAccessProfile:
     public_address_only: bool = True
     https_only: bool = True
     allowed_origins: tuple[PluginEgressDestination, ...] = ()
+    ca_bundle: NetworkCaBundle | None = None
     limits: NetworkProfileLimits = field(default_factory=NetworkProfileLimits)
     label: str | None = None
     description: str | None = None
@@ -188,11 +254,24 @@ class NetworkAccessProfile:
                 f"Profile mode {self.mode.value!r} is invalid for plane "
                 f"{self.plane.value!r}"
             )
-        if not self.public_address_only:
-            raise NetworkPolicyError(
-                "First-release network profiles only support public address space"
-            )
         origins = tuple(sorted(set(self.allowed_origins)))
+        if not self.public_address_only and (
+            self.plane is not NetworkAccessPlane.PLUGIN_EXECUTION
+            or self.mode is not NetworkProfileMode.CURATED
+            or not origins
+        ):
+            raise NetworkPolicyError(
+                "Non-public address space requires exact curated Plugin execution "
+                "origins"
+            )
+        if self.ca_bundle is not None and (
+            self.plane is not NetworkAccessPlane.PLUGIN_EXECUTION
+            or self.mode is not NetworkProfileMode.CURATED
+            or not origins
+        ):
+            raise NetworkPolicyError(
+                "Network CA bundles require exact curated Plugin execution origins"
+            )
         if any(origin.protocol is PluginEgressProtocol.POSTGRESQL for origin in origins):
             raise NetworkPolicyError(
                 "Network profiles may only authorize HTTP(S) origins"
@@ -232,6 +311,9 @@ class NetworkAccessProfile:
                 }
                 for origin in self.allowed_origins
             ],
+            "ca_bundle_sha256": (
+                None if self.ca_bundle is None else self.ca_bundle.sha256
+            ),
             "limits": self.limits.canonical_document(),
         }
         payload = json.dumps(
@@ -640,7 +722,15 @@ def render_effective_network_policy(
             )
         else:
             lines.append("Effective origins: none")
-        lines.append("Address policy: public only")
+        lines.append(
+            "Address policy: public only"
+            if profile is None or profile.public_address_only
+            else "Address policy: public and exact curated RFC1918"
+        )
+        if profile is not None and profile.ca_bundle is not None:
+            lines.append(
+                f"TLS trust bundle: sha256:{profile.ca_bundle.sha256}"
+            )
         lines.append("Status: runnable")
     else:
         lines.append(f"Status: denied ({resolution.reason.value})")
@@ -811,6 +901,16 @@ def _profile_from_manifest(
         raise NetworkPolicyError(
             f"Profile {name!r} address flags must be booleans"
         )
+    raw_ca_bundle_path = raw_profile.get("ca_bundle_path")
+    if raw_ca_bundle_path is not None and not isinstance(raw_ca_bundle_path, str):
+        raise NetworkPolicyError(
+            f"Profile {name!r} ca_bundle_path must be a string"
+        )
+    ca_bundle = (
+        None
+        if raw_ca_bundle_path is None
+        else NetworkCaBundle.load(Path(raw_ca_bundle_path))
+    )
     return NetworkAccessProfile(
         name=name,
         plane=plane,
@@ -818,6 +918,7 @@ def _profile_from_manifest(
         public_address_only=raw_public,
         https_only=raw_https_only,
         allowed_origins=tuple(sorted(allowed_origins)),
+        ca_bundle=ca_bundle,
         limits=limits,
         label=_optional_str(raw_profile.get("label"), f"profile {name!r} label"),
         description=_optional_str(
@@ -984,6 +1085,7 @@ __all__ = [
     "HttpEgressResolution",
     "NetworkAccessPlane",
     "NetworkAccessProfile",
+    "NetworkCaBundle",
     "NetworkPolicy",
     "NetworkPolicyError",
     "NetworkProfileAssignment",

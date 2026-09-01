@@ -18,12 +18,14 @@ from grafy_core.ports.storage import FileStoragePort
 from grafy_core.runtime.plugin_invocation import PluginInvocationRequest
 
 from grafy_api.plugin_egress import (
+    PluginEgressAddressScope,
     PluginEgressBrokerPlan,
     PluginEgressBrokerPolicy,
     PluginEgressDestination,
     ResolvedPluginEgressDestination,
 )
 from grafy_api.plugin_oci import runtime_profile
+from grafy_api.network_policy import NetworkCaBundle
 from grafy_api.v1.routes.executions.runtime.plugin_docker import (
     DockerPluginRuntime,
     PluginRuntimeReleaseLookup,
@@ -46,6 +48,8 @@ def _key(
     postgresql_destination: PluginEgressDestination | None = None,
     network_profile_digest: str | None = None,
     http_destinations: tuple[PluginEgressDestination, ...] = (),
+    http_address_scope: PluginEgressAddressScope = PluginEgressAddressScope.PUBLIC,
+    network_ca_bundle_sha256: str | None = None,
 ) -> _SandboxKey:
     return _SandboxKey(
         scope_id=scope_id or PluginSandboxScopeId.new(),
@@ -60,6 +64,8 @@ def _key(
         postgresql_destination=postgresql_destination,
         network_profile_digest=network_profile_digest,
         http_destinations=http_destinations,
+        http_address_scope=http_address_scope,
+        network_ca_bundle_sha256=network_ca_bundle_sha256,
     )
 
 
@@ -376,9 +382,18 @@ def test_sandbox_key_separates_origin_variants_and_profile_digests() -> None:
             http_destinations=(first_origin,),
         )
     )
+    other_ca = _sandbox_key_sha256(
+        _key(
+            PluginRuntimeCapability.NETWORK_EGRESS,
+            scope_id=scope,
+            network_profile_digest="a" * 64,
+            http_destinations=(first_origin,),
+            network_ca_bundle_sha256="c" * 64,
+        )
+    )
 
     assert base == same_variant
-    assert len({base, other_origin, other_profile}) == 3
+    assert len({base, other_origin, other_profile, other_ca}) == 4
 
 
 @pytest.mark.asyncio
@@ -433,6 +448,86 @@ async def test_egress_plan_covers_only_effective_destinations(
     # The deployment also allowlists database.example.com for PostgreSQL, but
     # this HTTP-only sandbox plan must not carry it.
     assert plan_hosts == {"api.example.com"}
+
+    await runtime._remove_sandbox_resources(  # pyright: ignore[reportPrivateUsage]
+        sandbox
+    )
+
+
+@pytest.mark.asyncio
+async def test_curated_runtime_carries_rfc1918_scope_into_broker_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(tmp_path)
+    commands: list[tuple[str, ...]] = []
+
+    async def docker(
+        arguments: tuple[str, ...],
+        **_kwargs: object,
+    ) -> DockerPluginRuntime._Completed:  # pyright: ignore[reportPrivateUsage]
+        commands.append(arguments)
+        stdout = b"" if arguments[0] != "create" else (
+            b"broker-id\n" if _BROKER_IMAGE in arguments else b"sandbox-id\n"
+        )
+        return DockerPluginRuntime._Completed(0, stdout, b"")  # pyright: ignore[reportPrivateUsage]
+
+    def private_answer(
+        *_args: object,
+        **_kwargs: object,
+    ) -> list[tuple[object, ...]]:
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("172.18.0.5", 8443)),
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", private_answer)
+    monkeypatch.setattr(runtime, "_docker", docker)
+    ca_path = tmp_path / "provider-ca.crt"
+    ca_path.write_bytes(
+        (
+            Path(__file__).resolve().parents[4]
+            / "infra"
+            / "e2e"
+            / "tls"
+            / "ca.crt"
+        ).read_bytes()
+    )
+    ca_bundle = NetworkCaBundle.load(ca_path)
+    sandbox = await runtime._create_container(  # pyright: ignore[reportPrivateUsage]
+        _key(
+            PluginRuntimeCapability.NETWORK_EGRESS,
+            network_profile_digest="a" * 64,
+            http_destinations=(
+                PluginEgressDestination.parse("https://openai-e2e:8443"),
+            ),
+            http_address_scope=PluginEgressAddressScope.CURATED_RFC1918,
+            network_ca_bundle_sha256=ca_bundle.sha256,
+        ),
+        _artifact(),
+        tmp_path,
+        network_ca_bundle=ca_bundle,
+    )
+
+    assert sandbox.egress_plan is not None
+    resolved = sandbox.egress_plan.destinations[0]
+    assert resolved.address_scope is PluginEgressAddressScope.CURATED_RFC1918
+    assert tuple(str(address) for address in resolved.addresses) == ("172.18.0.5",)
+    sandbox_create = next(
+        command
+        for command in commands
+        if command[0] == "create" and _BROKER_IMAGE not in command
+    )
+    ca_mount = sandbox_create[sandbox_create.index("--mount") + 1]
+    assert ca_mount.endswith(
+        ",target=/run/grafy/network-ca.pem,readonly"
+    )
+    staged_path = Path(ca_mount.partition("source=")[2].split(",", 1)[0])
+    assert staged_path.read_bytes() == ca_bundle.content
+    environment = runtime._guest_egress_environment(  # pyright: ignore[reportPrivateUsage]
+        sandbox,
+        cast(PluginInvocationRequest, SimpleNamespace(config={})),
+    )
+    assert "SSL_CERT_FILE=/run/grafy/network-ca.pem" in environment
 
     await runtime._remove_sandbox_resources(  # pyright: ignore[reportPrivateUsage]
         sandbox
