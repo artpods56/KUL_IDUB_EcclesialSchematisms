@@ -180,9 +180,9 @@ def test_security_audit_requires_explicit_safe_attribution() -> None:
         )
 
 
-def test_personal_access_tokens_allow_publication_but_exclude_administration() -> None:
+def test_personal_access_tokens_allow_automation_but_exclude_administration() -> None:
     assert WorkspaceCapability.MANAGE_MEMBERS not in PAT_ALLOWED_CAPABILITIES
-    assert WorkspaceCapability.MANAGE_SECRETS not in PAT_ALLOWED_CAPABILITIES
+    assert WorkspaceCapability.MANAGE_SECRETS in PAT_ALLOWED_CAPABILITIES
     assert WorkspaceCapability.MANAGE_MODULE_LIBRARY not in PAT_ALLOWED_CAPABILITIES
     assert WorkspaceCapability.PUBLISH_PLUGIN in PAT_ALLOWED_CAPABILITIES
     assert WorkspaceCapability.PUBLISH_MODULE in PAT_ALLOWED_CAPABILITIES

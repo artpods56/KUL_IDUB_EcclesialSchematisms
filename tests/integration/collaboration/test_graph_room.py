@@ -19,7 +19,7 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from grafy_api.settings import Settings
 from grafy_api.v1.models import PluginReleasePinModel
-from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.auth.dependencies import browser_actor, workspace_actor
 from grafy_api.v1.routes.auth.models import WorkspaceMemberRoleRequest
 from grafy_api.v1.routes.collaboration.hub import (
     CLOSE_SLOW_CONSUMER,
@@ -37,8 +37,6 @@ from grafy_api.v1.routes.collaboration.views import websocket_browser_actor
 from grafy_api.v1.routes.executions.models import RunRequest
 from grafy_api.v1.routes.saved_graphs.models import (
     CreateSavedGraphRequest,
-    GraphPointModel,
-    SavedGraphNodeModel,
     SubmitGraphCommandRequest,
     UpdateSavedGraphRequest,
 )
@@ -48,7 +46,12 @@ from grafy_core.domain.collaboration import (
 )
 from grafy_core.domain.identity import ActorContext, User, Workspace, WorkspaceRole
 from grafy_core.domain.plugin_identity import PluginReleaseScope
-from grafy_core.domain.saved_graphs import SavedGraphPluginReleasePin
+from grafy_core.domain.saved_graphs import (
+    GraphPoint,
+    SavedGraphDocument,
+    SavedGraphNode,
+    SavedGraphPluginReleasePin,
+)
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from tests.support.clients import GrafyApi
@@ -114,6 +117,7 @@ def room_client(tmp_path: Path, settings: Settings) -> Iterator[RoomClient]:
         ),
         overrides={
             browser_actor: switcher.actor,
+            workspace_actor: switcher.actor,
             websocket_browser_actor: switcher.actor,
         },
     ) as client:
@@ -136,6 +140,7 @@ def heartbeat_room_client(tmp_path: Path, settings: Settings) -> Iterator[RoomCl
         ),
         overrides={
             browser_actor: switcher.actor,
+            workspace_actor: switcher.actor,
             websocket_browser_actor: switcher.actor,
         },
     ) as client:
@@ -218,7 +223,9 @@ def test_room_ready_fixture_matches_protocol_model() -> None:
 def test_room_ready_admits_authenticated_member(room_client: RoomClient) -> None:
     api, _switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
 
     with _connect_room(api, population.workspace.id, graph.id) as websocket:
         ready = websocket.receive_json()
@@ -251,7 +258,9 @@ def test_join_ready_precedes_command_committed_after_head_snapshot(
 
     api, _switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
     initial_head = workspace_api.graphs.get_head_ok(graph.id)
 
     # The WS join and the raced HTTP command must hit the same live service
@@ -351,7 +360,9 @@ def test_join_ready_precedes_command_committed_after_head_snapshot(
 def test_room_rejects_invalid_origin(room_client: RoomClient) -> None:
     api, _switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
 
     with pytest.raises(WebSocketDenialResponse) as denied:
         with _connect_room(
@@ -367,7 +378,9 @@ def test_room_rejects_invalid_origin(room_client: RoomClient) -> None:
 def test_room_rejects_non_member(room_client: RoomClient) -> None:
     api, switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
     switcher.as_user(population.stranger.id)
 
     with pytest.raises(WebSocketDenialResponse) as denied:
@@ -383,7 +396,9 @@ def test_two_sessions_converge_on_accepted_sequence_and_head(
 
     api, switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
 
     with _connect_room(api, population.workspace.id, graph.id) as owner_ws:
         owner_ready = owner_ws.receive_json()
@@ -440,7 +455,9 @@ def test_reconnect_idempotent_retry_does_not_double_apply(
 
     api, switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
     command_id = str(uuid4())
 
     with _connect_room(api, population.workspace.id, graph.id) as first_ws:
@@ -509,7 +526,9 @@ def test_reconnect_idempotent_retry_does_not_double_apply(
 def test_viewer_command_is_rejected_without_fanout(room_client: RoomClient) -> None:
     api, switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
 
     with _connect_room(api, population.workspace.id, graph.id) as owner_ws:
         owner_ws.receive_json()
@@ -538,7 +557,9 @@ def test_viewer_command_is_rejected_without_fanout(room_client: RoomClient) -> N
 def test_role_change_closes_with_permissions_changed(room_client: RoomClient) -> None:
     api, switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
     switcher.as_user(population.editor.id)
 
     with _connect_room(api, population.workspace.id, graph.id) as editor_ws:
@@ -568,7 +589,9 @@ def test_http_epoch_reset_rehydrates_connected_sessions(
 ) -> None:
     api, _switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
     revision = workspace_api.graphs.get_ok(graph.id).revision
 
     with _connect_room(api, population.workspace.id, graph.id) as websocket:
@@ -577,8 +600,7 @@ def test_http_epoch_reset_rehydrates_connected_sessions(
             graph.id,
             UpdateSavedGraphRequest(
                 name="Replaced document",
-                nodes=[],
-                edges=[],
+                document=SavedGraphDocument(),
                 expected_revision=revision,
             ),
         )
@@ -592,7 +614,9 @@ def test_http_epoch_reset_rehydrates_connected_sessions(
 def test_http_command_publishes_to_room(room_client: RoomClient) -> None:
     api, _switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
     command_id = str(uuid4())
 
     with _connect_room(api, population.workspace.id, graph.id) as websocket:
@@ -628,16 +652,18 @@ def test_http_plugin_release_update_publishes_semantic_command(
     graph = workspace_api.graphs.create_ok(
         CreateSavedGraphRequest(
             name="Room graph",
-            nodes=[
-                SavedGraphNodeModel(
-                    id="n1",
-                    operator_id="notes.write",
-                    operator_version=1,
-                    position=GraphPointModel(x=10, y=20),
-                    config={"text": "preserve"},
-                    plugin_release=PluginReleasePinModel.from_saved_pin(current_pin),
-                )
-            ],
+            document=SavedGraphDocument(
+                nodes=(
+                    SavedGraphNode(
+                        id="n1",
+                        operator_id="notes.write",
+                        operator_version=1,
+                        position=GraphPoint(x=10, y=20),
+                        config={"text": "preserve"},
+                        plugin_release_pin=current_pin,
+                    ),
+                ),
+            ),
         )
     )
     command_id = uuid4()
@@ -683,7 +709,9 @@ def test_http_plugin_release_update_publishes_semantic_command(
 def test_room_sends_application_heartbeat(heartbeat_room_client: RoomClient) -> None:
     api, _switcher, population = heartbeat_room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
 
     with _connect_room(api, population.workspace.id, graph.id) as websocket:
         ready = websocket.receive_json()
@@ -714,7 +742,9 @@ def test_heartbeat_revalidation_closes_on_lost_role_invalidation(
 
     api, switcher, population = heartbeat_room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
     switcher.as_user(population.editor.id)
 
     with _connect_room(api, population.workspace.id, graph.id) as editor_ws:
@@ -739,7 +769,9 @@ def test_presence_join_leave_fanout_and_room_ready_participants(
 ) -> None:
     api, switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
 
     with _connect_room(api, population.workspace.id, graph.id) as owner_ws:
         owner_ready = owner_ws.receive_json()
@@ -793,7 +825,9 @@ def test_presence_join_leave_fanout_and_room_ready_participants(
 def test_presence_cleared_on_access_revoked(room_client: RoomClient) -> None:
     api, switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
-    graph = workspace_api.graphs.create_ok(CreateSavedGraphRequest(name="Room graph"))
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(name="Room graph", document=SavedGraphDocument())
+    )
 
     with _connect_room(api, population.workspace.id, graph.id) as owner_ws:
         owner_ws.receive_json()
@@ -1031,7 +1065,9 @@ def test_two_sessions_see_execution_start_and_complete(
     api, switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
     graph = workspace_api.graphs.create_ok(
-        CreateSavedGraphRequest(name="Execution room graph")
+        CreateSavedGraphRequest(
+            name="Execution room graph", document=SavedGraphDocument()
+        )
     )
 
     with _connect_room(api, population.workspace.id, graph.id) as owner_ws:
@@ -1083,7 +1119,9 @@ def test_viewer_discovers_active_execution_on_room_ready_and_cannot_cancel(
     api, switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
     graph = workspace_api.graphs.create_ok(
-        CreateSavedGraphRequest(name="Execution room graph")
+        CreateSavedGraphRequest(
+            name="Execution room graph", document=SavedGraphDocument()
+        )
     )
 
     # The execution manager captures the RunGraph instance during lifespan, so
@@ -1138,7 +1176,9 @@ def test_second_saved_execution_conflicts_while_active(room_client: RoomClient) 
     api, _switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
     graph = workspace_api.graphs.create_ok(
-        CreateSavedGraphRequest(name="Execution room graph")
+        CreateSavedGraphRequest(
+            name="Execution room graph", document=SavedGraphDocument()
+        )
     )
 
     # See test_viewer_discovers_active_execution...: the manager holds the
@@ -1177,7 +1217,9 @@ def test_two_sessions_see_execution_cancel(room_client: RoomClient) -> None:
     api, switcher, population = room_client
     workspace_api = api.workspace(population.workspace.id)
     graph = workspace_api.graphs.create_ok(
-        CreateSavedGraphRequest(name="Execution room graph")
+        CreateSavedGraphRequest(
+            name="Execution room graph", document=SavedGraphDocument()
+        )
     )
 
     # See test_viewer_discovers_active_execution...: the manager holds the

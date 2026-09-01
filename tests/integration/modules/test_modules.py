@@ -19,6 +19,7 @@ from grafy_core.domain.plugin_releases import PluginReleaseScope
 from grafy_core.domain.errors import NotFoundError, UserDisabledError
 from grafy_core.domain.identity import ActorContext
 from grafy_core.domain.modules import GraphModuleReference
+from grafy_core.domain.saved_graphs import SavedGraphDocument
 from grafy_core.artifacts import (
     InMemoryUnitOfWork,
     NoConfig,
@@ -252,6 +253,24 @@ def _artifact_binding() -> list[ArtifactTypeBindingModel]:
     ]
 
 
+def _saved_graph_document(
+    nodes: list[SavedGraphNodeModel],
+    edges: list[SavedGraphEdgeModel] | None = None,
+) -> SavedGraphDocument:
+    serialized_nodes: list[dict[str, object]] = []
+    for node in nodes:
+        serialized = node.model_dump(mode="json")
+        serialized["plugin_release_pin"] = serialized.pop("plugin_release")
+        serialized_nodes.append(serialized)
+    effective_edges = [] if edges is None else edges
+    return SavedGraphDocument.model_validate(
+        {
+            "nodes": serialized_nodes,
+            "edges": [edge.model_dump(mode="json") for edge in effective_edges],
+        }
+    )
+
+
 def _module_graph_payload(
     name: str,
     nodes: list[SavedGraphNodeModel],
@@ -280,17 +299,16 @@ def _module_graph_payload(
                 }
             )
         )
+    document = _saved_graph_document(pinned_nodes, edges)
     if expected_revision is None:
         return CreateSavedGraphRequest(
             name=name,
-            nodes=pinned_nodes,
-            edges=edges,
+            document=document,
         ).model_dump(mode="json")
     return UpdateSavedGraphRequest(
         name=name,
         expected_revision=expected_revision,
-        nodes=pinned_nodes,
-        edges=edges,
+        document=document,
     ).model_dump(mode="json")
 
 
@@ -1286,17 +1304,18 @@ def test_module_catalog_reports_invalid_boundary_wiring(
         f"/v1/workspaces/{WORKSPACE}/graphs",
         json=CreateSavedGraphRequest(
             name="Input without output",
-            nodes=[
-                SavedGraphNodeModel(
-                    id="module-input",
-                    operator_id="module.input",
-                    operator_version=1,
-                    config={"public_name": "text"},
-                    position=GraphPointModel(x=0, y=0),
-                    artifact_type_bindings=_artifact_binding(),
-                )
-            ],
-            edges=[],
+            document=_saved_graph_document(
+                [
+                    SavedGraphNodeModel(
+                        id="module-input",
+                        operator_id="module.input",
+                        operator_version=1,
+                        config={"public_name": "text"},
+                        position=GraphPointModel(x=0, y=0),
+                        artifact_type_bindings=_artifact_binding(),
+                    )
+                ],
+            ),
         ).model_dump(mode="json"),
     ).json()
     graph_id = created["id"]
@@ -1325,21 +1344,22 @@ def test_module_catalog_ignores_graphs_without_module_boundaries(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=CreateSavedGraphRequest(
             name="Ordinary workflow",
-            nodes=[
-                SavedGraphNodeModel(
-                    id="source",
-                    operator_id="text.input",
-                    operator_version=1,
-                    config={"text": "hello"},
-                    position=GraphPointModel(x=0, y=0),
-                    plugin_release=PluginReleasePinModel(
-                        scope=PluginReleaseScope.SYSTEM,
-                        slug="builtin.text",
-                        revision=1,
-                    ),
-                )
-            ],
-            edges=[],
+            document=_saved_graph_document(
+                [
+                    SavedGraphNodeModel(
+                        id="source",
+                        operator_id="text.input",
+                        operator_version=1,
+                        config={"text": "hello"},
+                        position=GraphPointModel(x=0, y=0),
+                        plugin_release=PluginReleasePinModel(
+                            scope=PluginReleaseScope.SYSTEM,
+                            slug="builtin.text",
+                            revision=1,
+                        ),
+                    )
+                ],
+            ),
         ).model_dump(mode="json"),
     ).json()
     graph_id = created["id"]

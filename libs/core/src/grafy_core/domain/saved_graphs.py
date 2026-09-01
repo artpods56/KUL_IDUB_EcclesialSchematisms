@@ -149,16 +149,6 @@ class SavedGraphArtifactTypeBinding(SavedGraphValue):
             )
         return value
 
-    @field_serializer("artifact_type")
-    def serialize_artifact_type(
-        self,
-        value: ArtifactTypeKey,
-    ) -> dict[str, object]:
-        return {
-            "id": value.id,
-            "schema_version": value.schema_version,
-        }
-
 
 class SavedGraphPluginReleasePin(SavedGraphValue):
     """Exact scoped Plugin release identity pinned on one graph node.

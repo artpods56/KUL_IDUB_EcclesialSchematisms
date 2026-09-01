@@ -250,7 +250,7 @@ async def create_saved_graph(
         command_id=uuid4(),
         command=ReplaceDocumentCommand(
             name=request.name,
-            document=request.to_document(),
+            document=request.document,
         ),
     )
     return SavedGraphResponse.from_graph(graph)
@@ -421,7 +421,7 @@ async def update_saved_graph(
             workspace_id=access.workspace_id,
             graph_id=graph_id,
             name=request.name,
-            document=request.to_document(),
+            document=request.document,
             expected_revision=request.expected_revision,
         )
     except NotFoundError as exc:

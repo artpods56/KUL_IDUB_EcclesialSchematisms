@@ -17,7 +17,7 @@ from grafy_persistence.unit_of_work import (
 )
 
 from tests.support.identity import browser_actor_override
-from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.auth.dependencies import browser_actor, workspace_actor
 from grafy_api.v1.routes.executions.models import (
     RunExecutionResponse,
     RunRequest,
@@ -66,19 +66,23 @@ def _saved_text_graph_nodes(text: str) -> list[SavedGraphNodeModel]:
 
 
 def _create_text_graph_request(name: str, text: str) -> CreateSavedGraphRequest:
+    node = _saved_text_graph_nodes(text)[0].model_dump(mode="json")
+    node["plugin_release_pin"] = node.pop("plugin_release")
     return CreateSavedGraphRequest(
-        name=name, nodes=_saved_text_graph_nodes(text), edges=[]
+        name=name,
+        document=SavedGraphDocument.model_validate({"nodes": [node]}),
     )
 
 
 def _update_text_graph_request(
     name: str, text: str, *, expected_revision: int
 ) -> UpdateSavedGraphRequest:
+    node = _saved_text_graph_nodes(text)[0].model_dump(mode="json")
+    node["plugin_release_pin"] = node.pop("plugin_release")
     return UpdateSavedGraphRequest(
         name=name,
         expected_revision=expected_revision,
-        nodes=_saved_text_graph_nodes(text),
-        edges=[],
+        document=SavedGraphDocument.model_validate({"nodes": [node]}),
     )
 
 
@@ -109,6 +113,172 @@ def _start_saved_text_execution(
         if current.status in {"cancelled", "succeeded", "failed"}:
             return current
     raise AssertionError("Execution did not reach a terminal status")
+
+
+def test_saved_graph_execution_endpoint_runs_the_full_checkpointed_graph(
+    builtin_client: TestClient,
+) -> None:
+    api = GrafyApi(builtin_client)
+    created = api.workspace(WORKSPACE_ID).graphs.create_ok(
+        _create_text_graph_request("HTTP execution", "through the saved graph")
+    )
+
+    response = builtin_client.post(
+        f"/v1/workspaces/{WORKSPACE_ID}/graphs/{created.id}/executions",
+        json={"expected_revision": created.revision},
+        headers={"Idempotency-Key": "saved-graph-http-1"},
+    )
+
+    assert response.status_code == 202
+    started = RunExecutionResponse.model_validate(response.json())
+    current = started
+    for _ in range(100):
+        current = api.workspace(WORKSPACE_ID).executions.get_execution_ok(
+            started.execution_id
+        )
+        if current.status in {"cancelled", "succeeded", "failed"}:
+            break
+    assert current.status == "succeeded"
+    assert current.result is not None
+    assert [(node.node_id, node.status) for node in current.result.node_runs] == [
+        ("text", "succeeded")
+    ]
+
+    history = api.workspace(WORKSPACE_ID).executions.get_graph_execution_ok(
+        created.id,
+        started.execution_id,
+    )
+    assert history.graph_revision == created.revision
+    assert history.scope == "all"
+    assert history.requested_node_ids == ["text"]
+
+
+def test_saved_graph_execution_endpoint_rejects_a_stale_revision(
+    builtin_client: TestClient,
+) -> None:
+    graphs = GrafyApi(builtin_client).workspace(WORKSPACE_ID).graphs
+    created = graphs.create_ok(_create_text_graph_request("Stale", "revision one"))
+    updated = graphs.update_ok(
+        created.id,
+        _update_text_graph_request(
+            "Stale",
+            "revision two",
+            expected_revision=created.revision,
+        ),
+    )
+
+    response = builtin_client.post(
+        f"/v1/workspaces/{WORKSPACE_ID}/graphs/{updated.id}/executions",
+        json={"expected_revision": created.revision},
+        headers={"Idempotency-Key": "new-stale-execution"},
+    )
+
+    assert response.status_code == 409
+    assert "current revision is 2" in response.json()["detail"]
+
+
+def test_saved_graph_execution_endpoint_replays_an_idempotent_start(
+    builtin_client: TestClient,
+) -> None:
+    created = (
+        GrafyApi(builtin_client)
+        .workspace(WORKSPACE_ID)
+        .graphs.create_ok(_create_text_graph_request("Idempotent", "once"))
+    )
+    path = f"/v1/workspaces/{WORKSPACE_ID}/graphs/{created.id}/executions"
+    headers = {"Idempotency-Key": "saved-graph-idempotency-1"}
+
+    first = builtin_client.post(
+        path,
+        json={"expected_revision": created.revision},
+        headers=headers,
+    )
+    replay = builtin_client.post(
+        path,
+        json={"expected_revision": created.revision},
+        headers=headers,
+    )
+
+    assert first.status_code == 202
+    assert replay.status_code == 202
+    assert replay.json()["execution_id"] == first.json()["execution_id"]
+
+
+def test_saved_graph_execution_endpoint_replays_after_the_graph_advances(
+    builtin_client: TestClient,
+) -> None:
+    graphs = GrafyApi(builtin_client).workspace(WORKSPACE_ID).graphs
+    created = graphs.create_ok(
+        _create_text_graph_request("Idempotent revision", "revision one")
+    )
+    path = f"/v1/workspaces/{WORKSPACE_ID}/graphs/{created.id}/executions"
+    headers = {"Idempotency-Key": "saved-graph-revision-retry"}
+    original = builtin_client.post(
+        path,
+        json={"expected_revision": created.revision},
+        headers=headers,
+    )
+    updated = graphs.update_ok(
+        created.id,
+        _update_text_graph_request(
+            "Idempotent revision",
+            "revision two",
+            expected_revision=created.revision,
+        ),
+    )
+
+    retry = builtin_client.post(
+        path,
+        json={"expected_revision": created.revision},
+        headers=headers,
+    )
+
+    assert updated.revision == 2
+    assert original.status_code == 202
+    assert retry.status_code == 202
+    assert retry.json()["execution_id"] == original.json()["execution_id"]
+
+
+def test_saved_graph_execution_endpoint_rejects_a_reused_key_for_a_new_identity(
+    builtin_client: TestClient,
+) -> None:
+    graphs = GrafyApi(builtin_client).workspace(WORKSPACE_ID).graphs
+    first = graphs.create_ok(_create_text_graph_request("First graph", "first"))
+    second = graphs.create_ok(_create_text_graph_request("Second graph", "second"))
+    headers = {"Idempotency-Key": "saved-graph-identity-conflict"}
+    original = builtin_client.post(
+        f"/v1/workspaces/{WORKSPACE_ID}/graphs/{first.id}/executions",
+        json={"expected_revision": first.revision},
+        headers=headers,
+    )
+    updated = graphs.update_ok(
+        first.id,
+        _update_text_graph_request(
+            "First graph",
+            "updated",
+            expected_revision=first.revision,
+        ),
+    )
+
+    different_revision = builtin_client.post(
+        f"/v1/workspaces/{WORKSPACE_ID}/graphs/{first.id}/executions",
+        json={"expected_revision": updated.revision},
+        headers=headers,
+    )
+    different_graph = builtin_client.post(
+        f"/v1/workspaces/{WORKSPACE_ID}/graphs/{second.id}/executions",
+        json={"expected_revision": second.revision},
+        headers=headers,
+    )
+
+    assert original.status_code == 202
+    original_execution_id = original.json()["execution_id"]
+    for response in (different_revision, different_graph):
+        assert response.status_code == 409
+        assert response.json()["detail"]["error_code"] == (
+            "execution_idempotency_conflict"
+        )
+        assert response.json()["detail"]["execution_id"] == original_execution_id
 
 
 def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
@@ -324,7 +494,10 @@ def test_application_startup_marks_stale_active_execution_failed(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
         ),
-        overrides={browser_actor: browser_actor_override},
+        overrides={
+            browser_actor: browser_actor_override,
+            workspace_actor: browser_actor_override,
+        },
     ) as client:
         api = GrafyApi(client)
         executions = api.workspace(WORKSPACE_ID).executions
@@ -347,7 +520,10 @@ def test_conflicting_start_reports_existing_execution_without_leaking(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
         ),
-        overrides={browser_actor: browser_actor_override},
+        overrides={
+            browser_actor: browser_actor_override,
+            workspace_actor: browser_actor_override,
+        },
     ) as client:
         # Boot-time recovery already failed the seeded execution; restore it
         # to running so the database-level uniqueness invariant is exercised.

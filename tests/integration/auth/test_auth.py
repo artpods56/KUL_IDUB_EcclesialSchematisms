@@ -557,6 +557,11 @@ async def test_pat_create_shows_secret_once_and_revoke_is_audited(
             )
             revoked = tokens.revoke_token(created.id, headers=_csrf_headers(issued))
             raw_token = created.token.get_secret_value()
+            client.cookies.clear()
+            rejected_revoked_token = client.get(
+                f"/v1/workspaces/{workspace.id}/nodes",
+                headers={"Authorization": f"Bearer {raw_token}"},
+            )
 
             assert raw_token not in repr(created)
             assert raw_token not in str(dict(created))
@@ -580,6 +585,9 @@ async def test_pat_create_shows_secret_once_and_revoke_is_audited(
             assert raw_token not in listed.text
             assert disallowed.status_code == 422
             assert revoked.status_code == 204
+            assert rejected_revoked_token.status_code == 401
+            assert rejected_revoked_token.headers["www-authenticate"] == "Bearer"
+            assert raw_token not in rejected_revoked_token.text
 
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             events = await unit_of_work.security_audit.list_for_workspace(
@@ -590,6 +598,237 @@ async def test_pat_create_shows_secret_once_and_revoke_is_audited(
         operations = [event.operation for event in events]
         assert "credential.pat.create" in operations
         assert "credential.pat.revoke" in operations
+
+
+async def test_workspace_route_accepts_personal_access_token_without_browser_cookie(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "workspace-pat-http.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
+        )
+        user, workspace, _ = await seed(database.sessions)
+        issued = await _auth_service(app_settings, database).issue_session(user.id)
+
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(issued)
+            created = api.workspace(workspace.id).create_token_ok(
+                PersonalAccessTokenCreateRequest(
+                    label="catalog e2e",
+                    scopes=(PersonalAccessTokenScope.VIEW_GRAPH,),
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                ),
+                headers=_csrf_headers(issued),
+            )
+            raw_token = created.token.get_secret_value()
+            client.cookies.clear()
+
+            response = client.get(
+                f"/v1/workspaces/{workspace.id}/nodes",
+                headers={"Authorization": f"Bearer {raw_token}"},
+            )
+
+            assert response.status_code == 200, response.text
+
+
+async def test_owner_can_issue_manage_secrets_personal_access_token(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "manage-secrets-pat.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
+        )
+        user, workspace, _ = await seed(database.sessions)
+        seeder = IdentitySeeder(lambda: SqlAlchemyUnitOfWork(database.sessions))
+        editor = await seeder.user(
+            email="editor@example.test",
+            display_name="Editor",
+        )
+        await seeder.membership(
+            user=editor,
+            workspace=workspace,
+            role=WorkspaceRole.EDITOR,
+        )
+        issued = await _auth_service(app_settings, database).issue_session(user.id)
+        editor_issued = await _auth_service(app_settings, database).issue_session(
+            editor.id
+        )
+
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(issued)
+            created = api.workspace(workspace.id).create_token_ok(
+                PersonalAccessTokenCreateRequest(
+                    label="e2e secrets",
+                    scopes=(PersonalAccessTokenScope.MANAGE_SECRETS,),
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                ),
+                headers=_csrf_headers(issued),
+            )
+
+            assert created.scopes == (WorkspaceCapability.MANAGE_SECRETS,)
+
+            api.authenticate(editor_issued)
+            denied = api.workspace(workspace.id).create_token(
+                PersonalAccessTokenCreateRequest(
+                    label="not an owner",
+                    scopes=(PersonalAccessTokenScope.MANAGE_SECRETS,),
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                ),
+                headers=_csrf_headers(editor_issued),
+            )
+
+            assert denied.status_code == 403
+
+
+async def test_workspace_pat_scope_limits_writes_and_bearer_write_skips_csrf(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "workspace-pat-scope.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "workspace": tmp_path / "workbench",
+            }
+        )
+        user, workspace, _ = await seed(database.sessions)
+        issued = await _auth_service(app_settings, database).issue_session(user.id)
+
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(issued)
+            workspace_api = api.workspace(workspace.id)
+            read_only = workspace_api.create_token_ok(
+                PersonalAccessTokenCreateRequest(
+                    label="read only",
+                    scopes=(PersonalAccessTokenScope.VIEW_GRAPH,),
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                ),
+                headers=_csrf_headers(issued),
+            )
+            editor = workspace_api.create_token_ok(
+                PersonalAccessTokenCreateRequest(
+                    label="upload e2e",
+                    scopes=(PersonalAccessTokenScope.EDIT_GRAPH,),
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                ),
+                headers=_csrf_headers(issued),
+            )
+            read_only_token = read_only.token.get_secret_value()
+            editor_token = editor.token.get_secret_value()
+            client.cookies.clear()
+
+            denied = workspace_api.uploads.upload(
+                "sample.png",
+                b"\x89PNG\r\n\x1a\n",
+                content_type="image/png",
+                headers={"Authorization": f"Bearer {read_only_token}"},
+            )
+            uploaded = workspace_api.uploads.upload(
+                "sample.png",
+                b"\x89PNG\r\n\x1a\n",
+                content_type="image/png",
+                headers={"Authorization": f"Bearer {editor_token}"},
+            )
+
+            assert denied.status_code == 403
+            assert uploaded.status_code == 200, uploaded.text
+
+
+async def test_workspace_route_rejects_ambiguous_and_cross_workspace_pat_use(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "workspace-pat-boundary.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
+        )
+        user, workspace, _ = await seed(database.sessions)
+        issued = await _auth_service(app_settings, database).issue_session(user.id)
+
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(issued)
+            created = api.workspace(workspace.id).create_token_ok(
+                PersonalAccessTokenCreateRequest(
+                    label="workspace bound",
+                    scopes=(PersonalAccessTokenScope.VIEW_GRAPH,),
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                ),
+                headers=_csrf_headers(issued),
+            )
+            raw_token = created.token.get_secret_value()
+            authorization = {"Authorization": f"Bearer {raw_token}"}
+
+            ambiguous = api.workspace(workspace.id).catalog.list_nodes(
+                headers=authorization
+            )
+            client.cookies.clear()
+            wrong_workspace = api.workspace(UUID(int=999)).catalog.list_nodes(
+                headers=authorization
+            )
+            browser_only = api.workspace(workspace.id).list_tokens(
+                headers=authorization
+            )
+
+            assert ambiguous.status_code == 401
+            assert wrong_workspace.status_code == 404
+            assert browser_only.status_code == 401
+
+
+async def test_workspace_pat_capability_failure_audit_uses_token_actor(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "workspace-pat-audit.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
+        )
+        user, workspace, _ = await seed(database.sessions)
+        issued = await _auth_service(app_settings, database).issue_session(user.id)
+
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(issued)
+            created = api.workspace(workspace.id).create_token_ok(
+                PersonalAccessTokenCreateRequest(
+                    label="audit scope",
+                    scopes=(PersonalAccessTokenScope.VIEW_GRAPH,),
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                ),
+                headers=_csrf_headers(issued),
+            )
+            raw_token = created.token.get_secret_value()
+            client.cookies.clear()
+
+            denied = client.post(
+                f"/v1/workspaces/{workspace.id}/graph-folders",
+                headers={"Authorization": f"Bearer {raw_token}"},
+                json={"name": "Denied"},
+            )
+
+            assert denied.status_code == 403
+
+        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            events = await unit_of_work.security_audit.list_for_workspace(
+                workspace.id,
+                limit=100,
+            )
+
+        failure = next(
+            event
+            for event in events
+            if event.operation == "graph.folder.create"
+            and event.outcome is SecurityAuditOutcome.FAILURE
+        )
+        assert failure.actor_kind is SecurityAuditActorKind.AUTHENTICATED
+        assert failure.user_id == user.id
+        assert failure.credential_reference == f"pat:{created.id}"
+        assert raw_token not in repr(failure)
 
 
 async def test_callback_validation_is_bounded_and_consumes_transaction(

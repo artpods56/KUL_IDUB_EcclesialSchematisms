@@ -108,6 +108,7 @@ PAT_ALLOWED_CAPABILITIES = frozenset(
         WorkspaceCapability.PUBLISH_PLUGIN,
         WorkspaceCapability.PUBLISH_MODULE,
         WorkspaceCapability.CREATE_TEMPLATE,
+        WorkspaceCapability.MANAGE_SECRETS,
     }
 )
 
@@ -557,6 +558,7 @@ class PlatformAccessToken:
 class ActorContext:
     user_id: UUID
     credential_reference: str | None = None
+    credential_workspace_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)

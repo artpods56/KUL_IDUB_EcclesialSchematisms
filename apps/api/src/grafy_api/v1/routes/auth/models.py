@@ -138,6 +138,7 @@ class PersonalAccessTokenScope(StrEnum):
     CANCEL_EXECUTION = "cancel_execution"
     PUBLISH_PLUGIN = "publish_plugin"
     PUBLISH_MODULE = "publish_module"
+    MANAGE_SECRETS = "manage_secrets"
 
 
 class PersonalAccessTokenCreateRequest(BaseModel):

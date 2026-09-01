@@ -365,6 +365,40 @@ class RunExecutionManager:
                     return summary
             return None
 
+    async def replay_saved_graph_execution(
+        self,
+        workspace_id: UUID,
+        idempotency_key: str,
+        *,
+        graph_id: UUID,
+        graph_revision: int,
+    ) -> RunExecutionSnapshot | None:
+        """Return the durable execution for one key and saved graph revision."""
+
+        async with self._lock:
+            if self._shutting_down:
+                raise RuntimeError("Run execution manager is shutting down")
+            if self._execution_history is None:
+                raise RuntimeError("Saved graph execution history is not configured")
+            normalized_idempotency_key = self._normalize_idempotency_key(
+                idempotency_key
+            )
+            existing = await self._execution_history.get_by_idempotency_key(
+                workspace_id,
+                normalized_idempotency_key,
+            )
+            if existing is None:
+                return None
+            if (
+                existing.graph_id != graph_id
+                or existing.graph_revision != graph_revision
+            ):
+                raise RunExecutionIdempotencyConflictError(
+                    normalized_idempotency_key,
+                    existing.execution_id,
+                )
+            return self._existing_execution_snapshot_locked(existing)
+
     async def start(
         self,
         workspace_id: UUID,
@@ -382,13 +416,9 @@ class RunExecutionManager:
             )
             normalized_idempotency_key = None
             if idempotency_key is not None:
-                normalized_idempotency_key = idempotency_key.strip()
-                if normalized_idempotency_key == "":
-                    raise ValueError("Execution idempotency key must not be blank")
-                if len(normalized_idempotency_key) > 255:
-                    raise ValueError(
-                        "Execution idempotency key must be at most 255 characters"
-                    )
+                normalized_idempotency_key = self._normalize_idempotency_key(
+                    idempotency_key
+                )
                 if not saved_graph_execution:
                     raise ValueError(
                         "Execution idempotency requires a saved graph context"
@@ -408,18 +438,7 @@ class RunExecutionManager:
                             normalized_idempotency_key,
                             existing.execution_id,
                         )
-                    record = self._executions.get(existing.execution_id)
-                    if record is not None:
-                        return self._snapshot_locked(record)
-                    return RunExecutionSnapshot(
-                        workspace_id=existing.workspace_id,
-                        execution_id=existing.execution_id,
-                        status=existing.status,
-                        active_node_id=None,
-                        result=None,
-                        error=existing.error,
-                        queue_position=None,
-                    )
+                    return self._existing_execution_snapshot_locked(existing)
             if (
                 saved_graph_execution
                 and self._pending_count_locked() >= self._max_pending_graphs
@@ -904,6 +923,32 @@ class RunExecutionManager:
             except ValueError:
                 queue_position = None
         return record.snapshot(queue_position)
+
+    def _existing_execution_snapshot_locked(
+        self,
+        execution: GraphExecution,
+    ) -> RunExecutionSnapshot:
+        record = self._executions.get(execution.execution_id)
+        if record is not None:
+            return self._snapshot_locked(record)
+        return RunExecutionSnapshot(
+            workspace_id=execution.workspace_id,
+            execution_id=execution.execution_id,
+            status=execution.status,
+            active_node_id=None,
+            result=None,
+            error=execution.error,
+            queue_position=None,
+        )
+
+    @staticmethod
+    def _normalize_idempotency_key(idempotency_key: str) -> str:
+        normalized = idempotency_key.strip()
+        if normalized == "":
+            raise ValueError("Execution idempotency key must not be blank")
+        if len(normalized) > 255:
+            raise ValueError("Execution idempotency key must be at most 255 characters")
+        return normalized
 
     def _pending_count_locked(self) -> int:
         return sum(

@@ -6,7 +6,7 @@ from pydantic import SecretStr
 
 from grafy_api.plugin_publishing import PluginDirectoryPublisher
 from grafy_api.settings import Settings
-from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.auth.dependencies import browser_actor, workspace_actor
 from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.domain.plugin_releases import PluginRuntimeArtifact
 from grafy_persistence.database import create_database
@@ -174,7 +174,10 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
     try:
         with client_with_overrides(
             settings=settings,
-            overrides={browser_actor: browser_actor_override},
+            overrides={
+                browser_actor: browser_actor_override,
+                workspace_actor: browser_actor_override,
+            },
         ) as client:
             response = client.get(workspace_api_path("/nodes"))
             assert response.status_code == 200

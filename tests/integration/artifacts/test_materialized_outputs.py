@@ -17,6 +17,7 @@ from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.domain.materialized_outputs import MaterializedNodeOutputs
 from grafy_core.domain.plugin_releases import PluginReleaseScope
+from grafy_core.domain.saved_graphs import SavedGraphDocument
 from grafy_persistence import schema
 from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import (
@@ -32,7 +33,7 @@ from grafy_api.v1.models import (
     ArtifactTypeKeyResponse,
     PluginReleasePinModel,
 )
-from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.auth.dependencies import browser_actor, workspace_actor
 from grafy_api.v1.routes.executions.models import (
     GraphMaterializationsResponse,
     PinnedOutputRequest,
@@ -72,7 +73,10 @@ from tests.testkit import (
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 
 # Every durable-API client authenticates through the shared test actor.
-_OVERRIDES = {browser_actor: browser_actor_override}
+_OVERRIDES = {
+    browser_actor: browser_actor_override,
+    workspace_actor: browser_actor_override,
+}
 _ARITHMETIC_RELEASE = PluginReleasePinModel(
     scope=PluginReleaseScope.SYSTEM,
     slug="builtin.arithmetic",
@@ -224,23 +228,35 @@ def _graph_payload(expected_revision: int | None = None) -> dict[str, object]:
         ("multiply", "arithmetic.multiply", {}),
     ]
     edges = _edges()
+    node_models = [
+        SavedGraphNodeModel(
+            id=node_id,
+            operator_id=operator_id,
+            operator_version=1,
+            config=config,
+            position=GraphPointModel(x=float(index * 200), y=20.0),
+            plugin_release=_ARITHMETIC_RELEASE,
+        )
+        for index, (node_id, operator_id, config) in enumerate(nodes)
+    ]
+    edge_models = [
+        SavedGraphEdgeModel.model_validate({"id": f"edge-{index}", **edge})
+        for index, edge in enumerate(edges, start=1)
+    ]
+    serialized_nodes: list[dict[str, object]] = []
+    for node in node_models:
+        serialized = node.model_dump(mode="json")
+        serialized["plugin_release_pin"] = serialized.pop("plugin_release")
+        serialized_nodes.append(serialized)
+    document = SavedGraphDocument.model_validate(
+        {
+            "nodes": serialized_nodes,
+            "edges": [edge.model_dump(mode="json") for edge in edge_models],
+        }
+    )
     payload = CreateSavedGraphRequest(
         name="Durable arithmetic graph",
-        nodes=[
-            SavedGraphNodeModel(
-                id=node_id,
-                operator_id=operator_id,
-                operator_version=1,
-                config=config,
-                position=GraphPointModel(x=float(index * 200), y=20.0),
-                plugin_release=_ARITHMETIC_RELEASE,
-            )
-            for index, (node_id, operator_id, config) in enumerate(nodes)
-        ],
-        edges=[
-            SavedGraphEdgeModel.model_validate({"id": f"edge-{index}", **edge})
-            for index, edge in enumerate(edges, start=1)
-        ],
+        document=document,
     ).model_dump(mode="json")
     if expected_revision is None:
         return payload
@@ -280,87 +296,99 @@ def _edges() -> list[dict[str, object]]:
 
 
 def _collect_graph_payload() -> dict[str, object]:
+    nodes = [
+        SavedGraphNodeModel(
+            id="first",
+            operator_id="text.input",
+            operator_version=1,
+            config={"text": "first"},
+            position=GraphPointModel(x=0.0, y=0.0),
+            plugin_release=_TEXT_RELEASE,
+        ),
+        SavedGraphNodeModel(
+            id="sequence-input",
+            operator_id="text.input",
+            operator_version=1,
+            config={"text": "second|third"},
+            position=GraphPointModel(x=200.0, y=0.0),
+            plugin_release=_TEXT_RELEASE,
+        ),
+        SavedGraphNodeModel(
+            id="split",
+            operator_id="text.split",
+            operator_version=1,
+            config={"separator": "|"},
+            position=GraphPointModel(x=400.0, y=0.0),
+            plugin_release=_TEXT_RELEASE,
+        ),
+        SavedGraphNodeModel(
+            id="collect",
+            operator_id="sequence.collect",
+            operator_version=1,
+            config={},
+            position=GraphPointModel(x=600.0, y=0.0),
+            plugin_release=_SEQUENCE_RELEASE,
+            artifact_type_bindings=[
+                ArtifactTypeBindingModel(
+                    variable="T",
+                    artifact_type=ArtifactTypeKeyResponse(
+                        id="scalar.text",
+                        schema_version=1,
+                    ),
+                )
+            ],
+            input_plugs=[
+                SavedGraphInputPlugModel(id="sequence-plug", port="items"),
+                SavedGraphInputPlugModel(id="first-plug", port="items"),
+            ],
+        ),
+    ]
+    edges = [
+        SavedGraphEdgeModel(
+            id="first-edge",
+            from_node="first",
+            from_port="text",
+            to_node="collect",
+            to_port="items",
+            to_plug="first-plug",
+        ),
+        SavedGraphEdgeModel(
+            id="sequence-input-edge",
+            from_node="sequence-input",
+            from_port="text",
+            to_node="split",
+            to_port="text",
+        ),
+        SavedGraphEdgeModel(
+            id="sequence-edge",
+            from_node="split",
+            from_port="parts",
+            to_node="collect",
+            to_port="items",
+            to_plug="sequence-plug",
+        ),
+    ]
+    serialized_nodes: list[dict[str, object]] = []
+    for node in nodes:
+        serialized = node.model_dump(mode="json")
+        serialized["plugin_release_pin"] = serialized.pop("plugin_release")
+        serialized_nodes.append(serialized)
     return CreateSavedGraphRequest(
         name="Durable collect graph",
-        nodes=[
-            SavedGraphNodeModel(
-                id="first",
-                operator_id="text.input",
-                operator_version=1,
-                config={"text": "first"},
-                position=GraphPointModel(x=0.0, y=0.0),
-                plugin_release=_TEXT_RELEASE,
-            ),
-            SavedGraphNodeModel(
-                id="sequence-input",
-                operator_id="text.input",
-                operator_version=1,
-                config={"text": "second|third"},
-                position=GraphPointModel(x=200.0, y=0.0),
-                plugin_release=_TEXT_RELEASE,
-            ),
-            SavedGraphNodeModel(
-                id="split",
-                operator_id="text.split",
-                operator_version=1,
-                config={"separator": "|"},
-                position=GraphPointModel(x=400.0, y=0.0),
-                plugin_release=_TEXT_RELEASE,
-            ),
-            SavedGraphNodeModel(
-                id="collect",
-                operator_id="sequence.collect",
-                operator_version=1,
-                config={},
-                position=GraphPointModel(x=600.0, y=0.0),
-                plugin_release=_SEQUENCE_RELEASE,
-                artifact_type_bindings=[
-                    ArtifactTypeBindingModel(
-                        variable="T",
-                        artifact_type=ArtifactTypeKeyResponse(
-                            id="scalar.text",
-                            schema_version=1,
-                        ),
-                    )
-                ],
-                input_plugs=[
-                    SavedGraphInputPlugModel(id="sequence-plug", port="items"),
-                    SavedGraphInputPlugModel(id="first-plug", port="items"),
-                ],
-            ),
-        ],
-        edges=[
-            SavedGraphEdgeModel(
-                id="first-edge",
-                from_node="first",
-                from_port="text",
-                to_node="collect",
-                to_port="items",
-                to_plug="first-plug",
-            ),
-            SavedGraphEdgeModel(
-                id="sequence-input-edge",
-                from_node="sequence-input",
-                from_port="text",
-                to_node="split",
-                to_port="text",
-            ),
-            SavedGraphEdgeModel(
-                id="sequence-edge",
-                from_node="split",
-                from_port="parts",
-                to_node="collect",
-                to_port="items",
-                to_plug="sequence-plug",
-            ),
-        ],
+        document=SavedGraphDocument.model_validate(
+            {
+                "nodes": serialized_nodes,
+                "edges": [edge.model_dump(mode="json") for edge in edges],
+            }
+        ),
     ).model_dump(mode="json")
 
 
 def _collect_run_payload(graph: SavedGraphResponse) -> dict[str, object]:
     graph_payload = _collect_graph_payload()
-    nodes = cast(list[dict[str, object]], graph_payload["nodes"])
-    edges = cast(list[dict[str, object]], graph_payload["edges"])
+    document = cast(dict[str, object], graph_payload["document"])
+    nodes = cast(list[dict[str, object]], document["nodes"])
+    edges = cast(list[dict[str, object]], document["edges"])
     return RunRequest(
         nodes=pin_selected_system_nodes(
             [UnpinnedRunNodeRequest.model_validate(node) for node in nodes]
@@ -705,14 +733,15 @@ def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
         assert isinstance(split_value, ArtifactRefSequence)
 
         graph_payload = _collect_graph_payload()
+        document = cast(dict[str, object], graph_payload["document"])
         collect_node = next(
             node
-            for node in cast(list[dict[str, object]], graph_payload["nodes"])
+            for node in cast(list[dict[str, object]], document["nodes"])
             if node["id"] == "collect"
         )
         incoming_edges = [
             edge
-            for edge in cast(list[dict[str, object]], graph_payload["edges"])
+            for edge in cast(list[dict[str, object]], document["edges"])
             if edge["to_node"] == "collect"
         ]
         selected_run = fresh_client.post(
@@ -831,7 +860,8 @@ def test_graph_update_carries_compatible_materializations_to_new_revision(
         assert full_run.status_code == 200
 
         moved_payload = _graph_payload(expected_revision=graph.revision)
-        nodes = cast(list[dict[str, object]], moved_payload["nodes"])
+        document = cast(dict[str, object], moved_payload["document"])
+        nodes = cast(list[dict[str, object]], document["nodes"])
         nodes[0] = {
             **nodes[0],
             "position": {"x": 40, "y": 80},

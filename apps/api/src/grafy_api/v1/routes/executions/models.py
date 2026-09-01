@@ -24,6 +24,7 @@ from grafy_core.domain.execution_history import (
     GraphExecutionScope,
     GraphExecutionStatus,
 )
+from grafy_core.domain.saved_graphs import SavedGraph, SavedGraphRevision
 from grafy_core.nodes import (
     MAX_NODE_PROGRESS_COUNTER,
     MAX_NODE_PROGRESS_MESSAGE_LENGTH,
@@ -32,6 +33,7 @@ from grafy_core.nodes import (
 from grafy_api.v1.models import (
     ApiResponse,
     ArtifactTypeBindingModel,
+    ArtifactTypeKeyResponse,
     PluginReleasePinModel,
 )
 from grafy_api.v1.routes.artifacts.models import ArtifactSummaryResponse
@@ -120,6 +122,10 @@ class PinnedOutputRequest(BaseModel):
     value: ArtifactRef | ArtifactRefSequence
 
 
+class SavedGraphExecutionRequest(BaseModel):
+    expected_revision: int = Field(ge=1)
+
+
 class RunRequest(BaseModel):
     nodes: list[RunNodeRequest]
     edges: list[RunEdgeRequest] = Field(default_factory=list)
@@ -129,6 +135,76 @@ class RunRequest(BaseModel):
     graph_revision: int | None = Field(default=None, ge=1)
     secret_graph_id: UUID | None = None
     secret_graph_revision: int | None = Field(default=None, ge=1)
+
+    @classmethod
+    def from_saved_graph(
+        cls,
+        graph: SavedGraph | SavedGraphRevision,
+    ) -> "RunRequest":
+        active_edges = [edge for edge in graph.document.edges if edge.enabled]
+        connected_plugs = {
+            (edge.to_node, edge.to_plug)
+            for edge in active_edges
+            if edge.to_plug is not None
+        }
+        return cls(
+            nodes=[
+                RunNodeRequest(
+                    id=node.id,
+                    operator_id=node.operator_id,
+                    operator_version=node.operator_version,
+                    config=node.config_dict(),
+                    input_plugs=[
+                        RunInputPlugRequest(id=plug.id, port=plug.port)
+                        for plug in node.input_plugs
+                        if (node.id, plug.id) in connected_plugs
+                    ],
+                    artifact_type_bindings=[
+                        ArtifactTypeBindingModel(
+                            variable=binding.variable,
+                            artifact_type=ArtifactTypeKeyResponse.from_key(
+                                binding.artifact_type
+                            ),
+                        )
+                        for binding in node.artifact_type_bindings
+                    ],
+                    plugin_release=(
+                        PluginReleasePinModel.from_saved_pin(node.plugin_release_pin)
+                        if node.plugin_release_pin is not None
+                        else None
+                    ),
+                )
+                for node in graph.document.nodes
+            ],
+            edges=[
+                RunEdgeRequest(
+                    from_node=edge.from_node,
+                    from_port=edge.from_port,
+                    to_node=edge.to_node,
+                    to_port=edge.to_port,
+                    to_plug=edge.to_plug,
+                    projection=(
+                        FieldProjectionRequest(path=list(edge.projection.path))
+                        if edge.projection is not None
+                        else None
+                    ),
+                    conversion_path=[
+                        ArtifactConversionRequest(
+                            id=conversion.id,
+                            version=conversion.version,
+                        )
+                        for conversion in edge.conversion_path
+                    ],
+                    collection_mode=edge.collection_mode,
+                )
+                for edge in active_edges
+            ],
+            scope="all",
+            graph_id=graph.id,
+            graph_revision=graph.revision,
+            secret_graph_id=graph.id,
+            secret_graph_revision=graph.revision,
+        )
 
     @model_validator(mode="after")
     def validate_graph_context(self) -> "RunRequest":
@@ -497,4 +573,5 @@ __all__ = [
     "RunPortOutputResponse",
     "RunRequest",
     "RunResponse",
+    "SavedGraphExecutionRequest",
 ]

@@ -50,6 +50,11 @@ async def authorize_workspace(
 ) -> WorkspaceAccess:
     """Authorize workspace access through the caller's active transaction."""
 
+    if (
+        actor.credential_workspace_id is not None
+        and actor.credential_workspace_id != workspace_id
+    ):
+        raise NotFoundError("Workspace", str(workspace_id))
     workspace = await identity.lock_workspace_for_membership_mutation(workspace_id)
     if workspace is None:
         raise NotFoundError("Workspace", str(workspace_id))
@@ -140,6 +145,7 @@ class IdentityService:
                 actor=ActorContext(
                     user_id=token.user_id,
                     credential_reference=f"pat:{token.id}",
+                    credential_workspace_id=token.workspace_id,
                 ),
                 workspace_id=token.workspace_id,
                 capabilities=frozenset(capabilities),

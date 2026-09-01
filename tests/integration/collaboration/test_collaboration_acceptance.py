@@ -15,7 +15,7 @@ from pydantic import SecretStr
 from starlette.websockets import WebSocketDisconnect
 
 from grafy_api.settings import Settings
-from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.auth.dependencies import browser_actor, workspace_actor
 from grafy_api.v1.routes.auth.models import WorkspaceInvitationCreateRequest
 from grafy_api.v1.routes.collaboration.views import websocket_browser_actor
 from grafy_api.v1.routes.executions.models import RunRequest
@@ -26,6 +26,7 @@ from grafy_core.domain.identity import (
     WorkspaceKind,
     WorkspaceRole,
 )
+from grafy_core.domain.saved_graphs import SavedGraphDocument
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from tests.support.clients import GrafyApi
@@ -106,6 +107,7 @@ def test_phase7_two_session_collaboration_acceptance_journey(
         ),
         overrides={
             browser_actor: switcher.actor,
+            workspace_actor: switcher.actor,
             websocket_browser_actor: switcher.actor,
         },
     ) as client:
@@ -115,7 +117,7 @@ def test_phase7_two_session_collaboration_acceptance_journey(
 
         switcher.as_user(owner.id)
         personal_graph = personal_api.graphs.create_ok(
-            CreateSavedGraphRequest(name="Private draft")
+            CreateSavedGraphRequest(name="Private draft", document=SavedGraphDocument())
         )
 
         switcher.as_user(editor.id)
@@ -124,7 +126,9 @@ def test_phase7_two_session_collaboration_acceptance_journey(
 
         switcher.as_user(owner.id)
         shared_graph = shared_api.graphs.create_ok(
-            CreateSavedGraphRequest(name="Shared acceptance graph")
+            CreateSavedGraphRequest(
+                name="Shared acceptance graph", document=SavedGraphDocument()
+            )
         )
         editor_invitation = shared_api.create_invitation_ok(
             WorkspaceInvitationCreateRequest(
@@ -134,9 +138,12 @@ def test_phase7_two_session_collaboration_acceptance_journey(
         )
         switcher.as_user(editor.id)
         assert shared_api.graphs.list().status_code == 404
-        assert api.raw.post(
-            f"/v1/me/invitations/{editor_invitation.id}/accept"
-        ).status_code == 200
+        assert (
+            api.raw.post(
+                f"/v1/me/invitations/{editor_invitation.id}/accept"
+            ).status_code
+            == 200
+        )
 
         switcher.as_user(owner.id)
         viewer_invitation = shared_api.create_invitation_ok(
@@ -146,9 +153,12 @@ def test_phase7_two_session_collaboration_acceptance_journey(
             )
         )
         switcher.as_user(viewer.id)
-        assert api.raw.post(
-            f"/v1/me/invitations/{viewer_invitation.id}/accept"
-        ).status_code == 200
+        assert (
+            api.raw.post(
+                f"/v1/me/invitations/{viewer_invitation.id}/accept"
+            ).status_code
+            == 200
+        )
 
         switcher.as_user(owner.id)
         member_ids = {member.user.id for member in shared_api.list_members_ok()}

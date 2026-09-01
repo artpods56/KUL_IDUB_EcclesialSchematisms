@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from tests.support.identity import WORKSPACE_ID, browser_actor_override
-from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.auth.dependencies import browser_actor, workspace_actor
 from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
 from grafy_api.v1.routes.executions.models import (
     RunExecutionCapacityErrorResponse,
@@ -63,8 +63,10 @@ def _parse_sse_events(body: str) -> list[dict[str, object]]:
 
 
 def test_application_lifespan_builds_and_releases_workbench_components(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.delenv("GRAFY_SYSTEM_PLUGIN_DEPLOYMENT_MANIFEST", raising=False)
     database_url = create_db_url(tmp_path, "lifespan.sqlite3")
 
     async def prepare_schema() -> None:
@@ -74,10 +76,14 @@ def test_application_lifespan_builds_and_releases_workbench_components(
     asyncio.run(prepare_schema())
     application = app_with_overrides(
         settings=Settings(
+            _env_file=None,  # pyright: ignore[reportCallIssue]
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
         ),
-        overrides={browser_actor: browser_actor_override},
+        overrides={
+            browser_actor: browser_actor_override,
+            workspace_actor: browser_actor_override,
+        },
     )
     assert not hasattr(application.state, "resources")
     assert hasattr(application.state, "identity")

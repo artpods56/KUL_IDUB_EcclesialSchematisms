@@ -23,6 +23,7 @@ from grafy_api.v1.routes.saved_graphs.models import (
 from grafy_core.domain.collaboration import RenameGraphCommand
 from grafy_core.domain.errors import NotFoundError
 from grafy_core.domain.identity import ActorContext
+from grafy_core.domain.saved_graphs import SavedGraphDocument
 
 from tests.support.clients import GrafyApi
 from tests.support.identity import TEST_USER_ID, WORKSPACE_ID
@@ -79,11 +80,30 @@ def _graph_edges() -> list[SavedGraphEdgeModel]:
     ]
 
 
+def _graph_document(
+    *,
+    nodes: list[SavedGraphNodeModel] | None = None,
+    edges: list[SavedGraphEdgeModel] | None = None,
+) -> SavedGraphDocument:
+    effective_nodes = nodes if nodes is not None else _graph_nodes()
+    effective_edges = edges if edges is not None else _graph_edges()
+    serialized_nodes = []
+    for node in effective_nodes:
+        serialized = node.model_dump(mode="json")
+        serialized["plugin_release_pin"] = serialized.pop("plugin_release")
+        serialized_nodes.append(serialized)
+    return SavedGraphDocument.model_validate(
+        {
+            "nodes": serialized_nodes,
+            "edges": [edge.model_dump(mode="json") for edge in effective_edges],
+        }
+    )
+
+
 def _graph_request(name: str = "Draft graph") -> CreateSavedGraphRequest:
     return CreateSavedGraphRequest(
         name=name,
-        nodes=_graph_nodes(),
-        edges=_graph_edges(),
+        document=_graph_document(),
     )
 
 
@@ -91,8 +111,7 @@ def _update_request(name: str, expected_revision: int) -> UpdateSavedGraphReques
     return UpdateSavedGraphRequest(
         name=name,
         expected_revision=expected_revision,
-        nodes=_graph_nodes(),
-        edges=_graph_edges(),
+        document=_graph_document(),
     )
 
 
@@ -164,6 +183,41 @@ def _raw_graph_payload(name: str = "Draft graph") -> dict[str, object]:
     }
 
 
+def _canonical_raw_graph_payload(name: str = "Draft graph") -> dict[str, object]:
+    payload = _raw_graph_payload(name)
+    return {
+        "name": payload.pop("name"),
+        "document": {
+            "schema_version": 5,
+            "nodes": payload.pop("nodes"),
+            "edges": payload.pop("edges"),
+            "presentation": payload.pop("presentation"),
+        },
+    }
+
+
+def test_create_accepts_the_canonical_saved_graph_document(
+    builtin_client: TestClient,
+) -> None:
+    payload = _canonical_raw_graph_payload("Canonical graph")
+    document = cast(dict[str, object], payload["document"])
+    for node in cast(list[dict[str, object]], document["nodes"]):
+        node["plugin_release_pin"] = None
+    payload["document"] = document
+
+    response = builtin_client.post(
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+        json=payload,
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["name"] == "Canonical graph"
+    assert body["document"] == document
+    assert "nodes" not in body
+    assert "edges" not in body
+
+
 def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
     api = GrafyApi(builtin_client)
     graphs = api.workspace(WORKSPACE_ID).graphs
@@ -174,23 +228,25 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
     graph_id = UUID(created["id"])
     assert created["name"] == "Parish index draft"
     assert created["revision"] == 1
-    assert len(created["nodes"]) == 2
-    assert len(created["edges"]) == 1
-    assert created["nodes"][0]["input_plugs"] == []
-    assert created["nodes"][0]["layout"] == {
+    document = created["document"]
+    assert document["schema_version"] == 5
+    assert len(document["nodes"]) == 2
+    assert len(document["edges"]) == 1
+    assert document["nodes"][0]["input_plugs"] == []
+    assert document["nodes"][0]["layout"] == {
         "width": 420.0,
         "body_height": 180.0,
         "appendix_height": None,
     }
-    assert created["nodes"][1]["input_plugs"] == [
+    assert document["nodes"][1]["input_plugs"] == [
         {"id": "primary-value", "port": "value"}
     ]
-    assert created["nodes"][1]["layout"] == {
+    assert document["nodes"][1]["layout"] == {
         "width": None,
         "body_height": None,
         "appendix_height": 320.0,
     }
-    assert created["nodes"][1]["artifact_type_bindings"] == [
+    assert document["nodes"][1]["artifact_type_bindings"] == [
         {
             "variable": "T",
             "artifact_type": {
@@ -199,16 +255,16 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
             },
         }
     ]
-    assert created["edges"][0]["to_plug"] == "primary-value"
-    assert created["edges"][0]["enabled"] is True
-    assert created["edges"][0]["projection"] == {"path": ["payload", "text"]}
-    assert created["edges"][0]["conversion_path"] == [
+    assert document["edges"][0]["to_plug"] == "primary-value"
+    assert document["edges"][0]["enabled"] is True
+    assert document["edges"][0]["projection"] == {"path": ["payload", "text"]}
+    assert document["edges"][0]["conversion_path"] == [
         {
             "id": "example.text.normalize",
             "version": 2,
         }
     ]
-    assert "conversion" not in created["edges"][0]
+    assert "conversion" not in document["edges"][0]
 
     get_response = graphs.get(graph_id)
     assert get_response.status_code == 200
@@ -248,8 +304,9 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
 def test_create_rejects_structurally_invalid_graph(builtin_client: TestClient) -> None:
     api = GrafyApi(builtin_client)
     graphs = api.workspace(WORKSPACE_ID).graphs
-    payload = _raw_graph_payload()
-    payload["edges"] = [
+    payload = _canonical_raw_graph_payload()
+    document = cast(dict[str, object], payload["document"])
+    document["edges"] = [
         {
             "id": "dangling",
             "from_node": "source",
@@ -271,8 +328,9 @@ def test_create_rejects_structurally_invalid_graph(builtin_client: TestClient) -
 def test_create_rejects_ambiguous_conversion_fields(
     builtin_client: TestClient,
 ) -> None:
-    payload = _raw_graph_payload()
-    edge = cast(list[dict[str, object]], payload["edges"])[0]
+    payload = _canonical_raw_graph_payload()
+    document = cast(dict[str, object], payload["document"])
+    edge = cast(list[dict[str, object]], document["edges"])[0]
     edge["conversion"] = edge["conversion_path"][0]
 
     response = builtin_client.post(
@@ -286,8 +344,9 @@ def test_create_rejects_ambiguous_conversion_fields(
 def test_create_rejects_duplicate_artifact_type_binding_variables(
     builtin_client: TestClient,
 ) -> None:
-    payload = _raw_graph_payload()
-    nodes = cast(list[dict[str, object]], payload["nodes"])
+    payload = _canonical_raw_graph_payload()
+    document = cast(dict[str, object], payload["document"])
+    nodes = cast(list[dict[str, object]], document["nodes"])
     target = nodes[1]
     bindings = cast(list[dict[str, object]], target["artifact_type_bindings"])
     bindings.append(
@@ -325,16 +384,21 @@ def test_saved_graph_preserves_conversion_path_order(
 
     create_response = graphs.create(
         CreateSavedGraphRequest(
-            name="Conversion path", nodes=_graph_nodes(), edges=edges
+            name="Conversion path",
+            document=_graph_document(edges=edges),
         )
     )
 
     assert create_response.status_code == 201
     created = create_response.json()
-    assert created["edges"][0]["conversion_path"] == expected_conversion_path
+    assert created["document"]["edges"][0]["conversion_path"] == (
+        expected_conversion_path
+    )
     loaded = graphs.get(UUID(created["id"]))
     assert loaded.status_code == 200
-    assert loaded.json()["edges"][0]["conversion_path"] == expected_conversion_path
+    assert loaded.json()["document"]["edges"][0]["conversion_path"] == (
+        expected_conversion_path
+    )
 
 
 def test_saved_graph_preserves_disabled_edges(builtin_client: TestClient) -> None:
@@ -344,22 +408,25 @@ def test_saved_graph_preserves_disabled_edges(builtin_client: TestClient) -> Non
     edges[0].enabled = False
 
     create_response = graphs.create(
-        CreateSavedGraphRequest(name="Disabled edge", nodes=_graph_nodes(), edges=edges)
+        CreateSavedGraphRequest(
+            name="Disabled edge",
+            document=_graph_document(edges=edges),
+        )
     )
 
     assert create_response.status_code == 201
     created = create_response.json()
-    assert created["edges"][0]["enabled"] is False
+    assert created["document"]["edges"][0]["enabled"] is False
     loaded = graphs.get(UUID(created["id"]))
     assert loaded.status_code == 200
-    assert loaded.json()["edges"][0]["enabled"] is False
+    assert loaded.json()["document"]["edges"][0]["enabled"] is False
 
 
 def test_update_requires_positive_expected_revision(builtin_client: TestClient) -> None:
     api = GrafyApi(builtin_client)
     graphs = api.workspace(WORKSPACE_ID).graphs
     created = graphs.create(_graph_request()).json()
-    payload = _raw_graph_payload("Invalid revision")
+    payload = _canonical_raw_graph_payload("Invalid revision")
     payload["expected_revision"] = 0
 
     response = builtin_client.put(

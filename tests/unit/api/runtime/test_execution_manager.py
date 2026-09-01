@@ -1176,6 +1176,59 @@ async def test_exact_idempotent_retry_after_manager_restart_returns_original() -
 
 
 @pytest.mark.asyncio
+async def test_saved_graph_replay_probe_requires_the_original_graph_identity() -> None:
+    graph_id = uuid4()
+    request = _saved_request(graph_id)
+    history = ControlledExecutionHistory()
+    admission_limiter = ExecutionAdmissionLimiter(1)
+    occupied_lease = admission_limiter.acquire()
+    manager = RunExecutionManager(
+        SequencedRunGraph(),
+        execution_history=history,
+        admission_limiter=admission_limiter,
+    )
+    original = await manager.start(
+        WORKSPACE_ID,
+        request,
+        idempotency_key="saved-graph-probe",
+    )
+
+    replay = await manager.replay_saved_graph_execution(
+        WORKSPACE_ID,
+        "saved-graph-probe",
+        graph_id=graph_id,
+        graph_revision=1,
+    )
+
+    assert replay is not None
+    assert replay.execution_id == original.execution_id
+    assert (
+        await manager.replay_saved_graph_execution(
+            WORKSPACE_ID,
+            "unused-key",
+            graph_id=graph_id,
+            graph_revision=1,
+        )
+        is None
+    )
+    for conflicting_graph_id, conflicting_revision in (
+        (graph_id, 2),
+        (uuid4(), 1),
+    ):
+        with pytest.raises(RunExecutionIdempotencyConflictError):
+            await manager.replay_saved_graph_execution(
+                WORKSPACE_ID,
+                "saved-graph-probe",
+                graph_id=conflicting_graph_id,
+                graph_revision=conflicting_revision,
+            )
+
+    await manager.cancel(WORKSPACE_ID, original.execution_id)
+    occupied_lease.release()
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_idempotency_key_rejects_a_different_submitted_request() -> None:
     run_graph = SequencedRunGraph()
     graph_id = uuid4()

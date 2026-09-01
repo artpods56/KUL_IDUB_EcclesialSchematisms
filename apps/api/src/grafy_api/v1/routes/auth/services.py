@@ -20,6 +20,7 @@ from fastapi import HTTPException, Request, Response, status
 
 from grafy_core.application.identity import IdentityService
 from grafy_core.domain.errors import (
+    CredentialAuthenticationError,
     NotFoundError,
     UserDisabledError,
 )
@@ -31,6 +32,7 @@ from grafy_core.domain.identity import (
     PAT_ALLOWED_CAPABILITIES,
     PersonalAccessToken,
     WorkspaceCapability,
+    WorkspacePatPrincipal,
 )
 from grafy_core.domain.security_audit import (
     SecurityAuditActorKind,
@@ -414,8 +416,8 @@ class AuthService:
                 await unit_of_work.commit()
                 await self._raise_authentication_required(request)
             request.state.auth_session = session
-            request.state.auth_session_user_id = session.user_id
-            request.state.auth_session_credential_reference = f"session:{session.id}"
+            request.state.auth_actor_user_id = session.user_id
+            request.state.auth_credential_reference = f"session:{session.id}"
             self._check_cookie_request(request)
             session.last_used_at = now
             await unit_of_work.commit()
@@ -423,6 +425,43 @@ class AuthService:
             user_id=session.user_id,
             credential_reference=f"session:{session.id}",
         )
+
+    async def require_workspace_pat_principal(
+        self,
+        request: Request,
+        authorization: str,
+    ) -> WorkspacePatPrincipal:
+        scheme, separator, value = authorization.partition(" ")
+        if (
+            not separator
+            or scheme.lower() != "bearer"
+            or not value
+            or any(character.isspace() for character in value)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        try:
+            public_prefix, secret = self._parse_personal_access_token(value)
+            principal = (
+                await self._identity_service.authenticate_personal_access_token(
+                    public_prefix=public_prefix,
+                    secret_digest=self.digest_secret(secret),
+                )
+            )
+        except (CredentialAuthenticationError, HTTPException) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from exc
+        request.state.auth_actor_user_id = principal.actor.user_id
+        request.state.auth_credential_reference = (
+            principal.actor.credential_reference
+        )
+        return principal
 
     async def current_session(self, request: Request) -> AuthSession:
         session = getattr(request.state, "auth_session", None)
@@ -520,12 +559,8 @@ class AuthService:
         resource_type: str | None = None,
         resource_id: str | None = None,
     ) -> None:
-        user_id = getattr(request.state, "auth_session_user_id", None)
-        credential_reference = getattr(
-            request.state,
-            "auth_session_credential_reference",
-            None,
-        )
+        user_id = getattr(request.state, "auth_actor_user_id", None)
+        credential_reference = getattr(request.state, "auth_credential_reference", None)
         if isinstance(user_id, UUID) and isinstance(credential_reference, str):
             await self.audit_authenticated_failure(
                 user_id=user_id,

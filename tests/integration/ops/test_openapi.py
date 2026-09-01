@@ -133,6 +133,17 @@ def test_openapi_contains_exact_public_routes(settings: Settings) -> None:
             "description": "Opaque host-only browser session cookie.",
         }
     )
+    workspace_pat_scheme_name = next(
+        name
+        for name, scheme in security_schemes.items()
+        if scheme
+        == {
+            "type": "http",
+            "description": "Workspace-bound personal access token.",
+            "scheme": "bearer",
+            "bearerFormat": "PAT",
+        }
+    )
     assert schema["paths"]["/v1/auth/oidc/login"]["get"].get("security") is None
     assert schema["paths"]["/v1/auth/oidc/callback"]["get"].get("security") is None
     assert schema["paths"]["/v1/auth/session"]["get"]["security"] == [
@@ -141,6 +152,9 @@ def test_openapi_contains_exact_public_routes(settings: Settings) -> None:
     assert schema["paths"]["/v1/workspaces"]["get"]["security"] == [
         {session_scheme_name: []}
     ]
+    assert schema["paths"]["/v1/workspaces/{workspace_id}/nodes"]["get"][
+        "security"
+    ] == [{session_scheme_name: []}, {workspace_pat_scheme_name: []}]
     pat_schema = schema["components"]["schemas"]["PersonalAccessTokenCreatedResponse"]
     assert "returned once" in pat_schema["properties"]["token"]["description"]
     pat_request_schema = schema["components"]["schemas"][
@@ -160,12 +174,13 @@ def test_openapi_contains_exact_public_routes(settings: Settings) -> None:
         "cancel_execution",
         "publish_plugin",
         "publish_module",
+        "manage_secrets",
     }
     assert pat_request_schema["properties"]["scopes"]["items"] == {
         "$ref": "#/components/schemas/PersonalAccessTokenScope"
     }
     assert "manage_members" not in pat_scope_schema["enum"]
-    assert "manage_secrets" not in pat_scope_schema["enum"]
+    assert "manage_secrets" in pat_scope_schema["enum"]
     assert "manage_module_library" not in pat_scope_schema["enum"]
     assert "rename_workspace" not in pat_scope_schema["enum"]
 
@@ -229,12 +244,52 @@ def test_openapi_contains_exact_public_routes(settings: Settings) -> None:
     ) == {"get"}
     assert set(
         schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions"]
-    ) == {"get"}
+    ) == {"get", "post"}
+    saved_execution_operation = schema["paths"][
+        "/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions"
+    ]["post"]
+    assert saved_execution_operation["requestBody"]["content"]["application/json"][
+        "schema"
+    ] == {"$ref": "#/components/schemas/SavedGraphExecutionRequest"}
+    assert any(
+        parameter["name"] == "Idempotency-Key"
+        for parameter in saved_execution_operation["parameters"]
+    )
     assert set(
         schema["paths"][
             "/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions/{execution_id}"
         ]
     ) == {"get"}
+    create_graph_schema = schema["components"]["schemas"]["CreateSavedGraphRequest"]
+    assert set(create_graph_schema["required"]) == {"name", "document"}
+    assert set(create_graph_schema["properties"]) == {"name", "document"}
+    assert create_graph_schema["properties"]["document"] == {
+        "$ref": "#/components/schemas/SavedGraphDocument"
+    }
+    update_graph_schema = schema["components"]["schemas"]["UpdateSavedGraphRequest"]
+    assert set(update_graph_schema["required"]) == {
+        "name",
+        "document",
+        "expected_revision",
+    }
+    saved_graph_schema = schema["components"]["schemas"]["SavedGraphResponse"]
+    assert set(saved_graph_schema["properties"]) == {
+        "id",
+        "name",
+        "revision",
+        "created_at",
+        "updated_at",
+        "document",
+    }
+    assert saved_graph_schema["properties"]["document"] == {
+        "$ref": "#/components/schemas/SavedGraphDocument"
+    }
+    saved_binding_schema = schema["components"]["schemas"][
+        "SavedGraphArtifactTypeBinding"
+    ]
+    assert saved_binding_schema["properties"]["artifact_type"] == {
+        "$ref": "#/components/schemas/ArtifactTypeKey"
+    }
     history_summary = schema["components"]["schemas"]["GraphExecutionSummaryResponse"]
     assert set(history_summary["properties"]) == {
         "execution_id",

@@ -647,6 +647,10 @@ async def test_personal_and_platform_credentials_resolve_typed_principals(
 
     assert workspace_principal.actor.user_id == provisioned.user.id
     assert workspace_principal.workspace_id == provisioned.personal_workspace.id
+    assert (
+        workspace_principal.actor.credential_workspace_id
+        == provisioned.personal_workspace.id
+    )
     assert platform_principal.principal_reference == "release-bot"
     assert platform_principal.credential_reference == f"platform-token:{platform.id}"
 
@@ -654,4 +658,16 @@ async def test_personal_and_platform_credentials_resolve_typed_principals(
         await service.authenticate_personal_access_token(
             public_prefix=personal.public_prefix,
             secret_digest=b"wrong-digest",
+        )
+
+    other_workspace = await service.create_shared_workspace(
+        actor=ActorContext(provisioned.user.id),
+        slug="other-pat-workspace",
+        name="Other PAT workspace",
+    )
+    with pytest.raises(NotFoundError):
+        await service.authorize(
+            actor=workspace_principal.actor,
+            workspace_id=other_workspace.id,
+            capability=WorkspaceCapability.VIEW_GRAPH,
         )

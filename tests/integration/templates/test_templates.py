@@ -10,7 +10,7 @@ from pydantic import SecretStr
 
 from grafy_api.settings import Settings
 from grafy_api.app_state import get_resources
-from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.auth.dependencies import browser_actor, workspace_actor
 from grafy_api.v1.routes.saved_graphs.models import (
     GraphFolderWriteRequest,
     UpdateSavedGraphRequest,
@@ -270,7 +270,7 @@ def template_client(
             database_url=SecretStr(database_url),
             auth_cookie_secure=False,
         ),
-        overrides={browser_actor: actor.actor},
+        overrides={browser_actor: actor.actor, workspace_actor: actor.actor},
     ) as client:
         yield client, actor
 
@@ -347,8 +347,9 @@ def test_template_snapshot_and_instantiations_remain_independent_and_safe(
     assert graph.status_code == 200, graph.text
     body = graph.json()
     assert body["name"] == "Climate review"
-    assert [node["id"] for node in body["nodes"]] == ["source"]
-    config = body["nodes"][0]["config"]
+    document = body["document"]
+    assert [node["id"] for node in document["nodes"]] == ["source"]
+    config = document["nodes"][0]["config"]
     assert config == {
         "safe_setting": "preserved",
         "nested": {"safe": True},
@@ -360,28 +361,33 @@ def test_template_snapshot_and_instantiations_remain_independent_and_safe(
     )
     assert destination.artifacts.content(SOURCE_ARTIFACT_ID).status_code == 404
 
-    mutated_nodes = body["nodes"]
+    mutated_nodes = document["nodes"]
     mutated_nodes[0]["config"]["safe_setting"] = "first copy only"
     updated_first = destination.graphs.update(
         first.graph_id,
         UpdateSavedGraphRequest(
             expected_revision=1,
             name=body["name"],
-            nodes=mutated_nodes,
-            edges=body["edges"],
-            presentation=body["presentation"],
+            document=SavedGraphDocument.model_validate(
+                {
+                    **document,
+                    "nodes": mutated_nodes,
+                }
+            ),
         ),
     )
     assert updated_first.status_code == 200, updated_first.text
     unchanged_second = destination.graphs.get(second.graph_id)
     assert unchanged_second.status_code == 200
-    assert unchanged_second.json()["nodes"][0]["config"]["safe_setting"] == (
-        "preserved"
-    )
+    assert unchanged_second.json()["document"]["nodes"][0]["config"][
+        "safe_setting"
+    ] == ("preserved")
 
     source = api.workspace(SOURCE_WORKSPACE_ID).graphs.get(SOURCE_GRAPH_ID)
     assert source.status_code == 200
-    assert [node["id"] for node in source.json()["nodes"]] == ["changed-later"]
+    assert [node["id"] for node in source.json()["document"]["nodes"]] == [
+        "changed-later"
+    ]
 
     invalid_capability = templates.create(
         CreateTemplateRequest(

@@ -35,11 +35,8 @@ from grafy_core.domain.saved_graphs import (
     GraphPresentationViewer,
     SavedGraph,
     SavedGraphAnnotationLayout,
-    SavedGraphArtifactTypeBinding,
-    SavedGraphConversion,
     SavedGraphDocument,
     SavedGraphEdge,
-    SavedGraphInputPlug,
     SavedGraphNode,
     SavedGraphNodeLayout,
     SavedGraphProjection,
@@ -122,6 +119,43 @@ class SavedGraphNodeModel(SavedGraphApiModel):
             raise ValueError("Node artifact type binding variables must be unique")
         return self
 
+    @classmethod
+    def from_domain(cls, node: SavedGraphNode) -> "SavedGraphNodeModel":
+        return cls(
+            id=node.id,
+            operator_id=node.operator_id,
+            operator_version=node.operator_version,
+            config=node.config_dict(),
+            position=GraphPointModel(x=node.position.x, y=node.position.y),
+            layout=(
+                SavedGraphNodeLayoutModel(
+                    width=node.layout.width,
+                    body_height=node.layout.body_height,
+                    appendix_height=node.layout.appendix_height,
+                )
+                if node.layout is not None
+                else None
+            ),
+            input_plugs=[
+                SavedGraphInputPlugModel(id=plug.id, port=plug.port)
+                for plug in node.input_plugs
+            ],
+            artifact_type_bindings=[
+                ArtifactTypeBindingModel(
+                    variable=binding.variable,
+                    artifact_type=ArtifactTypeKeyResponse.from_key(
+                        binding.artifact_type
+                    ),
+                )
+                for binding in node.artifact_type_bindings
+            ],
+            plugin_release=(
+                PluginReleasePinModel.from_saved_pin(node.plugin_release_pin)
+                if node.plugin_release_pin is not None
+                else None
+            ),
+        )
+
 
 class SavedGraphProjectionModel(SavedGraphApiModel):
     path: list[Identifier] = Field(min_length=1)
@@ -164,6 +198,36 @@ class SavedGraphEdgeModel(SavedGraphApiModel):
         conversion = normalized.pop("conversion")
         normalized["conversion_path"] = [] if conversion is None else [conversion]
         return normalized
+
+    @classmethod
+    def from_domain(cls, edge: SavedGraphEdge) -> "SavedGraphEdgeModel":
+        return cls(
+            id=edge.id,
+            enabled=edge.enabled,
+            from_node=edge.from_node,
+            from_port=edge.from_port,
+            to_node=edge.to_node,
+            to_port=edge.to_port,
+            to_plug=edge.to_plug,
+            collection_mode=edge.collection_mode,
+            projection=(
+                SavedGraphProjectionModel(path=list(edge.projection.path))
+                if edge.projection is not None
+                else None
+            ),
+            conversion_path=[
+                SavedGraphConversionModel(
+                    id=conversion.id,
+                    version=conversion.version,
+                )
+                for conversion in edge.conversion_path
+            ],
+            route_offset=(
+                GraphPointModel(x=edge.route_offset.x, y=edge.route_offset.y)
+                if edge.route_offset is not None
+                else None
+            ),
+        )
 
 
 class GraphPresentationViewerModel(SavedGraphApiModel):
@@ -385,13 +449,9 @@ class GraphPresentationDocumentModel(SavedGraphApiModel):
         )
 
 
-class SavedGraphWriteModel(SavedGraphApiModel):
+class SavedGraphWriteRequest(SavedGraphApiModel):
     name: str = Field(min_length=1, max_length=160)
-    nodes: list[SavedGraphNodeModel] = Field(default_factory=list)
-    edges: list[SavedGraphEdgeModel] = Field(default_factory=list)
-    presentation: GraphPresentationDocumentModel = Field(
-        default_factory=GraphPresentationDocumentModel,
-    )
+    document: SavedGraphDocument
 
     @field_validator("name", mode="before")
     @classmethod
@@ -400,104 +460,22 @@ class SavedGraphWriteModel(SavedGraphApiModel):
             return value.strip()
         return value
 
-    @model_validator(mode="after")
-    def validate_document(self) -> Self:
-        self.to_document()
-        return self
 
-    def to_document(self) -> SavedGraphDocument:
-        return SavedGraphDocument(
-            nodes=tuple(
-                SavedGraphNode(
-                    id=node.id,
-                    operator_id=node.operator_id,
-                    operator_version=node.operator_version,
-                    config=node.config,
-                    position=GraphPoint(
-                        x=node.position.x,
-                        y=node.position.y,
-                    ),
-                    layout=(
-                        SavedGraphNodeLayout(
-                            width=node.layout.width,
-                            body_height=node.layout.body_height,
-                            appendix_height=node.layout.appendix_height,
-                        )
-                        if node.layout is not None
-                        else None
-                    ),
-                    input_plugs=tuple(
-                        SavedGraphInputPlug(
-                            id=plug.id,
-                            port=plug.port,
-                        )
-                        for plug in node.input_plugs
-                    ),
-                    artifact_type_bindings=tuple(
-                        SavedGraphArtifactTypeBinding(
-                            variable=binding.variable,
-                            artifact_type=binding.artifact_type.to_key(),
-                        )
-                        for binding in node.artifact_type_bindings
-                    ),
-                    plugin_release_pin=(
-                        node.plugin_release.to_saved_pin()
-                        if node.plugin_release is not None
-                        else None
-                    ),
-                )
-                for node in self.nodes
-            ),
-            edges=tuple(
-                SavedGraphEdge(
-                    id=edge.id,
-                    enabled=edge.enabled,
-                    from_node=edge.from_node,
-                    from_port=edge.from_port,
-                    to_node=edge.to_node,
-                    to_port=edge.to_port,
-                    to_plug=edge.to_plug,
-                    collection_mode=edge.collection_mode,
-                    projection=(
-                        SavedGraphProjection(path=tuple(edge.projection.path))
-                        if edge.projection is not None
-                        else None
-                    ),
-                    conversion_path=tuple(
-                        SavedGraphConversion(
-                            id=conversion.id,
-                            version=conversion.version,
-                        )
-                        for conversion in edge.conversion_path
-                    ),
-                    route_offset=(
-                        GraphPoint(
-                            x=edge.route_offset.x,
-                            y=edge.route_offset.y,
-                        )
-                        if edge.route_offset is not None
-                        else None
-                    ),
-                )
-                for edge in self.edges
-            ),
-            presentation=self.presentation.to_domain(),
-        )
-
-
-class CreateSavedGraphRequest(SavedGraphWriteModel):
+class CreateSavedGraphRequest(SavedGraphWriteRequest):
     pass
 
 
-class UpdateSavedGraphRequest(SavedGraphWriteModel):
+class UpdateSavedGraphRequest(SavedGraphWriteRequest):
     expected_revision: int = Field(ge=1)
 
 
-class SavedGraphResponse(SavedGraphWriteModel):
+class SavedGraphResponse(SavedGraphApiModel):
     id: UUID
+    name: str
     revision: int
     created_at: datetime
     updated_at: datetime
+    document: SavedGraphDocument
 
     @classmethod
     def from_graph(cls, graph: SavedGraph) -> "SavedGraphResponse":
@@ -507,87 +485,7 @@ class SavedGraphResponse(SavedGraphWriteModel):
             revision=graph.revision,
             created_at=graph.created_at,
             updated_at=graph.updated_at,
-            nodes=[
-                SavedGraphNodeModel(
-                    id=node.id,
-                    operator_id=node.operator_id,
-                    operator_version=node.operator_version,
-                    config=node.config_dict(),
-                    position=GraphPointModel(
-                        x=node.position.x,
-                        y=node.position.y,
-                    ),
-                    layout=(
-                        SavedGraphNodeLayoutModel(
-                            width=node.layout.width,
-                            body_height=node.layout.body_height,
-                            appendix_height=node.layout.appendix_height,
-                        )
-                        if node.layout is not None
-                        else None
-                    ),
-                    input_plugs=[
-                        SavedGraphInputPlugModel(
-                            id=plug.id,
-                            port=plug.port,
-                        )
-                        for plug in node.input_plugs
-                    ],
-                    artifact_type_bindings=[
-                        ArtifactTypeBindingModel(
-                            variable=binding.variable,
-                            artifact_type=ArtifactTypeKeyResponse.from_key(
-                                binding.artifact_type
-                            ),
-                        )
-                        for binding in node.artifact_type_bindings
-                    ],
-                    plugin_release=(
-                        PluginReleasePinModel.from_saved_pin(
-                            node.plugin_release_pin
-                        )
-                        if node.plugin_release_pin is not None
-                        else None
-                    ),
-                )
-                for node in graph.document.nodes
-            ],
-            edges=[
-                SavedGraphEdgeModel(
-                    id=edge.id,
-                    enabled=edge.enabled,
-                    from_node=edge.from_node,
-                    from_port=edge.from_port,
-                    to_node=edge.to_node,
-                    to_port=edge.to_port,
-                    to_plug=edge.to_plug,
-                    collection_mode=edge.collection_mode,
-                    projection=(
-                        SavedGraphProjectionModel(path=list(edge.projection.path))
-                        if edge.projection is not None
-                        else None
-                    ),
-                    conversion_path=[
-                        SavedGraphConversionModel(
-                            id=conversion.id,
-                            version=conversion.version,
-                        )
-                        for conversion in edge.conversion_path
-                    ],
-                    route_offset=(
-                        GraphPointModel(
-                            x=edge.route_offset.x,
-                            y=edge.route_offset.y,
-                        )
-                        if edge.route_offset is not None
-                        else None
-                    ),
-                )
-                for edge in graph.document.edges
-            ],
-            presentation=GraphPresentationDocumentModel.from_domain(
-                graph.document.presentation
-            ),
+            document=graph.document,
         )
 
 
@@ -808,17 +706,6 @@ class CollaborativeHeadResponse(SavedGraphApiModel):
 
     @classmethod
     def from_head(cls, head: CollaborativeGraphHead) -> "CollaborativeHeadResponse":
-        mapped = SavedGraphResponse.from_graph(
-            SavedGraph(
-                workspace_id=head.workspace_id,
-                id=head.graph_id,
-                name=head.name,
-                document=head.document,
-                revision=max(head.checkpoint_revision, 1),
-                created_at=head.updated_at,
-                updated_at=head.updated_at,
-            )
-        )
         return cls(
             graph_id=head.graph_id,
             room_epoch=head.room_epoch,
@@ -827,9 +714,15 @@ class CollaborativeHeadResponse(SavedGraphApiModel):
             checkpoint_revision=head.checkpoint_revision,
             name=head.name,
             updated_at=head.updated_at,
-            nodes=mapped.nodes,
-            edges=mapped.edges,
-            presentation=mapped.presentation,
+            nodes=[
+                SavedGraphNodeModel.from_domain(node) for node in head.document.nodes
+            ],
+            edges=[
+                SavedGraphEdgeModel.from_domain(edge) for edge in head.document.edges
+            ],
+            presentation=GraphPresentationDocumentModel.from_domain(
+                head.document.presentation
+            ),
         )
 
 

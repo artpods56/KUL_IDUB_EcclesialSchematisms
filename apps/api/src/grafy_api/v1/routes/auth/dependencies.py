@@ -13,13 +13,14 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, Security, status
-from fastapi.security import APIKeyCookie
+from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
 
 from grafy_core.application.identity import IdentityService
 from grafy_core.domain.identity import (
     ActorContext,
     WorkspaceAccess,
     WorkspaceCapability,
+    WorkspacePatPrincipal,
 )
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
@@ -31,6 +32,11 @@ session_cookie_scheme = APIKeyCookie(
     name=SESSION_COOKIE,
     auto_error=False,
     description="Opaque host-only browser session cookie.",
+)
+workspace_pat_scheme = HTTPBearer(
+    auto_error=False,
+    bearerFormat="PAT",
+    description="Workspace-bound personal access token.",
 )
 
 
@@ -99,12 +105,65 @@ async def browser_actor(
         raise
 
 
+async def workspace_actor(
+    workspace_id: UUID,
+    request: Request,
+    auth: AuthServiceDependency,
+    session_cookie: Annotated[str | None, Security(session_cookie_scheme)],
+    _bearer: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Security(workspace_pat_scheme),
+    ],
+) -> ActorContext | WorkspacePatPrincipal:
+    authorization = request.headers.get("authorization")
+    if authorization is not None and session_cookie is not None:
+        await auth.audit_unauthenticated_failure(
+            operation="auth.workspace.verify",
+            error_code="ambiguous_credentials",
+            workspace_id=workspace_id,
+        )
+        request.state.auth_failure_audited = True
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Use either browser session or bearer authentication",
+        )
+    if authorization is None:
+        return await browser_actor(request, auth, session_cookie)
+    try:
+        principal = await auth.require_workspace_pat_principal(
+            request,
+            authorization,
+        )
+    except HTTPException:
+        await auth.audit_unauthenticated_failure(
+            operation="auth.pat.verify",
+            error_code="authentication_required",
+            workspace_id=workspace_id,
+        )
+        request.state.auth_failure_audited = True
+        raise
+    if principal.workspace_id != workspace_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workspace not found",
+        )
+    return principal
+
+
 def require_workspace_capability(capability: WorkspaceCapability):
     async def dependency(
         workspace_id: UUID,
-        actor: Annotated[ActorContext, Depends(browser_actor)],
+        workspace_principal: Annotated[
+            ActorContext | WorkspacePatPrincipal,
+            Depends(workspace_actor),
+        ],
         identity: IdentityServiceDependency,
     ) -> WorkspaceAccess:
+        if isinstance(workspace_principal, WorkspacePatPrincipal):
+            workspace_principal.require(capability)
+            actor = workspace_principal.actor
+        else:
+            actor = workspace_principal
         return await identity.authorize(
             actor=actor,
             workspace_id=workspace_id,
@@ -124,4 +183,6 @@ __all__ = [
     "identity_uow_factory",
     "require_workspace_capability",
     "session_cookie_scheme",
+    "workspace_actor",
+    "workspace_pat_scheme",
 ]

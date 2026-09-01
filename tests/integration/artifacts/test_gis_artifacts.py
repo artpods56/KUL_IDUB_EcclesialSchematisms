@@ -52,6 +52,7 @@ from grafy_api.v1.routes.artifacts.views import router as artifacts_router
 from grafy_api.v1.routes.auth.dependencies import (
     browser_actor,
     identity_service,
+    workspace_actor,
 )
 from grafy_storage import LocalFileObjectStore
 
@@ -149,6 +150,10 @@ def geo_artifact_client(
         lambda: _AllowAllIdentityService()
     )
     application.dependency_overrides[browser_actor] = lambda: ActorContext(
+        user_id=TEST_USER_ID,
+        credential_reference="test-session",
+    )
+    application.dependency_overrides[workspace_actor] = lambda: ActorContext(
         user_id=TEST_USER_ID,
         credential_reference="test-session",
     )

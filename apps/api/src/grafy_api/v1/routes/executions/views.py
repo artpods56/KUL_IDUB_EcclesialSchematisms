@@ -12,7 +12,7 @@ from grafy_core.domain.errors import (
     SavedGraphRevisionConflictError,
 )
 from grafy_core.domain.execution_history import GraphExecutionStatus
-from grafy_core.domain.identity import WorkspaceCapability
+from grafy_core.domain.identity import WorkspaceAccess, WorkspaceCapability
 
 from grafy_api.services.errors import (
     ArtifactContentUnavailableError,
@@ -47,6 +47,7 @@ from .models import (
     RunExecutionResponse,
     RunRequest,
     RunResponse,
+    SavedGraphExecutionRequest,
 )
 from .runtime.admission import RunExecutionCapacityError, RunExecutionQueueFullError
 from .runtime.manager import RunExecutionIdempotencyConflictError
@@ -61,6 +62,21 @@ ExecutionNodeFilter = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
 ]
+
+
+def _idempotency_conflict_http_exception(
+    error: RunExecutionIdempotencyConflictError,
+) -> HTTPException:
+    detail = RunExecutionIdempotencyConflictErrorDetail(
+        error_code=error.error_code,
+        message=str(error),
+        idempotency_key=error.idempotency_key,
+        execution_id=error.execution_id,
+    )
+    return HTTPException(
+        status_code=409,
+        detail=detail.model_dump(mode="json"),
+    )
 
 
 @router.post(
@@ -114,6 +130,67 @@ async def run_graph(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+async def _start_execution(
+    *,
+    request: RunRequest,
+    manager: RunExecutionManagerDependency,
+    presenter: RunResultPresenterDependency,
+    uow_factory: IdentityUnitOfWorkFactoryDependency,
+    access: WorkspaceAccess,
+    idempotency_key: str | None,
+) -> RunExecutionResponse:
+    try:
+        starter = await actor_presentation_for(uow_factory, access.actor)
+        execution = await manager.start(
+            access.workspace_id,
+            request,
+            starter=starter,
+            idempotency_key=idempotency_key,
+        )
+        return await presenter.execution_response(execution)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RunExecutionCapacityError as exc:
+        detail = RunExecutionCapacityErrorDetail(
+            error_code=exc.error_code,
+            message=str(exc),
+            max_active_executions=exc.max_active_executions,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=detail.model_dump(mode="json"),
+            headers={"Retry-After": "1"},
+        ) from exc
+    except RunExecutionQueueFullError as exc:
+        detail = RunExecutionQueueFullErrorDetail(
+            error_code=exc.error_code,
+            message=str(exc),
+            max_pending_graphs=exc.max_pending_graphs,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=detail.model_dump(mode="json"),
+            headers={"Retry-After": "1"},
+        ) from exc
+    except RunExecutionIdempotencyConflictError as exc:
+        raise _idempotency_conflict_http_exception(exc) from exc
+    except CollaborationActiveExecutionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": exc.error_code,
+                "message": str(exc),
+                "execution_id": str(exc.execution_id),
+                "graph_id": str(exc.graph_id),
+                "workspace_id": str(exc.workspace_id),
+            },
+        ) from exc
+    except SavedGraphRevisionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except WorkbenchOperationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.post(
     "/executions",
     response_model=RunExecutionResponse,
@@ -152,65 +229,80 @@ async def start_graph_execution(
         ),
     ] = None,
 ) -> RunExecutionResponse:
+    return await _start_execution(
+        request=request,
+        manager=manager,
+        presenter=presenter,
+        uow_factory=uow_factory,
+        access=access,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
+    "/graphs/{graph_id}/executions",
+    response_model=RunExecutionResponse,
+    status_code=202,
+    responses={
+        429: {
+            "description": "The durable pending execution queue is full",
+            "model": RunExecutionQueueFullErrorResponse,
+            "headers": {
+                "Retry-After": {
+                    "description": "Minimum delay before retrying, in seconds",
+                    "schema": {"type": "integer", "minimum": 1},
+                }
+            },
+        }
+    },
+)
+async def start_saved_graph_execution(
+    graph_id: UUID,
+    request: SavedGraphExecutionRequest,
+    saved_graphs: SavedGraphDependency,
+    manager: RunExecutionManagerDependency,
+    presenter: RunResultPresenterDependency,
+    uow_factory: IdentityUnitOfWorkFactoryDependency,
+    access: require_workspace_capability(WorkspaceCapability.EXECUTE_GRAPH),
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            min_length=1,
+            max_length=255,
+            pattern=r".*\S.*",
+        ),
+    ] = None,
+) -> RunExecutionResponse:
+    if idempotency_key is not None:
+        try:
+            replay = await manager.replay_saved_graph_execution(
+                access.workspace_id,
+                idempotency_key,
+                graph_id=graph_id,
+                graph_revision=request.expected_revision,
+            )
+        except RunExecutionIdempotencyConflictError as exc:
+            raise _idempotency_conflict_http_exception(exc) from exc
+        if replay is not None:
+            return await presenter.execution_response(replay)
+
     try:
-        starter = await actor_presentation_for(uow_factory, access.actor)
-        execution = await manager.start(
-            access.workspace_id,
-            request,
-            starter=starter,
-            idempotency_key=idempotency_key,
-        )
-        return await presenter.execution_response(execution)
+        graph = await saved_graphs.get(access.workspace_id, graph_id)
+        graph.ensure_revision(request.expected_revision)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except RunExecutionCapacityError as exc:
-        detail = RunExecutionCapacityErrorDetail(
-            error_code=exc.error_code,
-            message=str(exc),
-            max_active_executions=exc.max_active_executions,
-        )
-        raise HTTPException(
-            status_code=429,
-            detail=detail.model_dump(mode="json"),
-            headers={"Retry-After": "1"},
-        ) from exc
-    except RunExecutionQueueFullError as exc:
-        detail = RunExecutionQueueFullErrorDetail(
-            error_code=exc.error_code,
-            message=str(exc),
-            max_pending_graphs=exc.max_pending_graphs,
-        )
-        raise HTTPException(
-            status_code=429,
-            detail=detail.model_dump(mode="json"),
-            headers={"Retry-After": "1"},
-        ) from exc
-    except RunExecutionIdempotencyConflictError as exc:
-        detail = RunExecutionIdempotencyConflictErrorDetail(
-            error_code=exc.error_code,
-            message=str(exc),
-            idempotency_key=exc.idempotency_key,
-            execution_id=exc.execution_id,
-        )
-        raise HTTPException(
-            status_code=409,
-            detail=detail.model_dump(mode="json"),
-        ) from exc
-    except CollaborationActiveExecutionError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error_code": exc.error_code,
-                "message": str(exc),
-                "execution_id": str(exc.execution_id),
-                "graph_id": str(exc.graph_id),
-                "workspace_id": str(exc.workspace_id),
-            },
-        ) from exc
     except SavedGraphRevisionConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except WorkbenchOperationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return await _start_execution(
+        request=RunRequest.from_saved_graph(graph),
+        manager=manager,
+        presenter=presenter,
+        uow_factory=uow_factory,
+        access=access,
+        idempotency_key=idempotency_key,
+    )
 
 
 @router.get(
@@ -452,4 +544,5 @@ __all__ = [
     "router",
     "run_graph",
     "start_graph_execution",
+    "start_saved_graph_execution",
 ]

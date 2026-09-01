@@ -16,7 +16,7 @@ from grafy_persistence.database import create_database
 from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemySavedGraphUnitOfWork
 
-from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.auth.dependencies import browser_actor, workspace_actor
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
@@ -38,16 +38,19 @@ def browser_actor_override() -> ActorContext:
 
 
 def install_browser_actor_override(application: FastAPI) -> None:
+    """Install the shared actor for browser-only and workspace HTTP routes."""
+
     application.dependency_overrides[browser_actor] = browser_actor_override
+    application.dependency_overrides[workspace_actor] = browser_actor_override
 
 
 @dataclass
 class ActorSwitcher:
     """A browser-actor override that a test can repoint at another user.
 
-    Register ``ActorSwitcher(user_id).actor`` as the override for the
-    ``browser_actor`` dependency, then call ``as_user()`` to switch the
-    acting user without re-registering anything.
+    Register ``ActorSwitcher(user_id).actor`` for both ``browser_actor`` and
+    ``workspace_actor``, then call ``as_user()`` to switch the acting user
+    without re-registering anything.
     """
 
     user_id: UUID

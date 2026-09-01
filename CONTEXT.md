@@ -28,7 +28,7 @@ boundary.
 | `UserGraphState` | Per-user state for one workspace-owned graph: starred and last-opened activity. It is never shared graph state and never grants access. |
 | `OidcLoginTransaction` | Short-lived, single-use Authorization Code + PKCE handshake state. |
 | `AuthSession` | Opaque, revocable browser session (raw secret never persisted). |
-| `PersonalAccessToken` (`PAT`) | Workspace-bound bearer credential; effective permission is token scope ∩ current membership. |
+| `PersonalAccessToken` (`PAT`) | Workspace-bound bearer credential for SDK, CLI, MCP, and other non-browser HTTP automation; effective permission is token scope ∩ current membership. |
 | `PlatformAccessToken` | Deployment-issued bearer credential for global Plugin operations. It names a platform principal and grants only explicit publish, promote, or revoke scopes. |
 | `SecurityAuditEvent` | Metadata-only security audit row; never stores credentials, provider payloads, or command/config bodies. |
 | `GraphRoomSession` | Ephemeral WebSocket participant identity inside one `(workspace_id, graph_id)` collaboration room. |
@@ -280,6 +280,17 @@ single execution method. Port contracts are derived from its model annotations.
 Changing the artifact key or value shape of a fixed port requires a new operator
 version or an explicit saved-graph migration; the host does not silently rewrite
 older contracts.
+
+### Programmatic graph authoring
+
+Programmatic authors build the same versioned `SavedGraphDocument` persisted by
+the API and edited by the Workbench. A client resolves each local Node class
+against the effective Workspace catalog, embeds the catalog's exact Plugin
+release pin, validates port shapes and artifact-type bindings, and submits the
+ordinary nested `{ name, document }` graph contract. There is no automation-only
+graph representation or execution path. Saved execution reloads the requested
+revision on the server and derives the runtime request from that canonical
+document; the client cannot replace its topology at execution time.
 
 ### Input plug
 

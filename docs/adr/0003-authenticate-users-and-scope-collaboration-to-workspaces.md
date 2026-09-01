@@ -1,8 +1,9 @@
 # ADR 0003: Authenticate users and scope collaboration to workspaces
 
-- **Status:** Accepted; amended 2026-08-26 to remove the legacy local workspace
+- **Status:** Accepted; amended 2026-08-26 to remove the legacy local workspace;
+  amended 2026-09-01 to authenticate workspace HTTP automation with PATs
 - **Date:** 2026-08-06
-- **Scope:** Identity, workspace tenancy, browser sessions, collaboration authorization, and MCP access
+- **Scope:** Identity, workspace tenancy, browser sessions, collaboration authorization, HTTP automation, and MCP access
 - **Designs:** [Authentication and workspace tenancy design](../design/authentication-and-workspace-tenancy.md), [realtime Workbench collaboration rework](../design/workbench-realtime-collaboration.md)
 - **Plan:** [Authentication and workspace refactor](../plans/authentication-workspace-refactor.md)
 
@@ -30,11 +31,12 @@ cached outputs with ambiguous ownership. Moving a graph between security
 boundaries would create the same ambiguity and could silently transfer secret
 or runtime capabilities.
 
-Browser and MCP callers use different transports, but they must not acquire
-different authorization semantics. The browser needs an interactive login and
-revocable session. Remote MCP clients need a non-browser credential and the
-live workspace-aware graph contracts. Both must resolve an authenticated user
-and call the same application-owned authorization and mutation workflows.
+Browser and automation callers use different credentials, but they must not
+acquire different authorization semantics. The browser needs an interactive
+login and revocable session. SDK, CLI, and MCP clients need a non-browser
+credential and the live workspace-aware graph contracts. Both must resolve an
+authenticated user and call the same application-owned authorization and
+mutation workflows.
 
 ## Decision
 
@@ -190,6 +192,27 @@ it. Secret configure and remove operations remain protected HTTP workflows for
 owners. They never carry secret values over the collaboration protocol and may
 publish only bounded configured or unconfigured metadata after commit.
 
+### Use Workspace PATs for non-browser HTTP automation
+
+Workspace-qualified REST routes accept exactly one of the opaque browser
+session cookie or a Workspace-bound PAT in an `Authorization: Bearer` header.
+Cookie-authenticated unsafe requests retain Origin and CSRF checks. PAT requests
+do not use CSRF because they do not rely on ambient browser credentials. A
+request carrying both credential kinds is rejected instead of choosing one.
+
+The PAT supplies the authenticated User and its sole Workspace; neither value
+is caller input. Its effective authority is the intersection of its scopes and
+the User's current membership capabilities. That Workspace binding is retained
+through secondary authorization inside cross-Workspace workflows, so entering
+through a route for one Workspace cannot turn the User's ambient membership in
+another Workspace into token authority. The `manage_secrets` scope is explicit
+and required for programmatic node-secret configuration.
+
+Browser identity, credential-management, and `/me` routes remain cookie-only.
+They never accept a PAT that could issue or manage its own credential. Bearer
+failures and authorized operations use the PAT's safe audit reference; the raw
+token and secret request values never enter errors, logs, or audit rows.
+
 ### Mount Streamable HTTP MCP under the API authority
 
 The FastMCP Streamable HTTP application is mounted at `/mcp` under the same
@@ -201,11 +224,12 @@ unauthenticated port and does not use an ambient service credential that
 bypasses user authorization. Grafy does not retain a stdio MCP server or
 entry point; HTTP is the MCP transport.
 
-An MCP user creates a random opaque access token scoped to one workspace and a
-bounded set of capabilities. The database stores only its hash, public lookup
-prefix, user and workspace identities, expiry, last-used metadata, and
-revocation state. The client presents it only as an `Authorization: Bearer`
-header. Bearer-authenticated calls do not use browser cookies or CSRF tokens.
+An automation user creates a random opaque access token scoped to one workspace
+and a bounded set of capabilities. The database stores only its hash, public
+lookup prefix, user and workspace identities, expiry, last-used metadata, and
+revocation state. SDK, CLI, and MCP clients present it only as an
+`Authorization: Bearer` header. Bearer-authenticated calls do not use browser
+cookies or CSRF tokens.
 
 Every MCP request resolves the token, active user, current workspace membership,
 and required capability. Membership removal and role loss that leave a token's
