@@ -300,6 +300,13 @@ and keeps its identity when reordered, so the saved plug order—not canvas
 coordinates or edge creation order—defines execution order. The edge continues
 to own its projection and artifact conversion path.
 
+### Builtin family
+
+A node family that ships as part of the workbench application, not as a Plugin
+package. Builtin nodes identify by family slug and the deployment's build
+digest. They are not Plugin releases and do not carry a release pin.
+_Avoid_: bundled plugin, host plugin, system builtin plugin
+
 ### Plugin
 
 A uv-managed project that groups nodes, artifact types, and the resolver/writer
@@ -323,13 +330,10 @@ Diffs do not auto-publish or retarget graph pins. See
 [plugin unification](docs/design/plugin-unification.md).
 
 System publication is a separate platform/CI authority and always retains an
-OCI artifact. A current System release may additionally match an exact baked
-host binding and run in-process. Historical System releases and all Workspace
-releases use the retained isolated adapter. Host implementations are imported
-only through an exact deployment manifest whose release binding and installed
-distribution digest match; absent configuration registers Module boundaries
-only. Plugins depend inward on core contracts and ports, never on the API host
-or concrete storage adapters.
+OCI artifact. Published Plugins execute in isolated workers. Builtin families
+owned by `grafy-workbench` run in-process with the API and are not Plugin
+releases. Plugins depend inward on core contracts and ports, never on the API
+host or concrete storage adapters.
 
 ### Plugin root
 
@@ -350,9 +354,9 @@ scope. The same descriptor bytes do not create another revision.
 ### Plugin installation
 
 An append-only assignment of one exact Plugin release to either System scope or
-one Workspace. The installation owns execution policy, System distribution
-metadata, installation authority, and installation time. Assigning the same
-release to another scope does not rebuild or copy its source or OCI artifact.
+one Workspace. The installation owns execution policy, installation authority,
+and installation time. Assigning the same release to another scope does not
+rebuild or copy its source or OCI artifact.
 
 ### Plugin selection
 
@@ -393,18 +397,19 @@ nodes.
 
 ### Node catalog / Add node
 
-The effective Workspace catalog contains selected global System Plugin
-releases, selected Plugin releases owned by that Workspace, and published
-Modules as a separate entry kind. System distribution (`bundled`, `optional`,
-or `published`) is independent from scope and execution policy. Every insertable
-Plugin node supplies an exact scoped release pin and a derived runnable or
-disabled reason from the same admission policy used by compilation.
+The effective Workspace catalog contains app-owned builtin families, selected
+global System Plugin releases, selected Plugin releases owned by that
+Workspace, and published Modules as a separate entry kind.
+Every insertable Plugin node supplies an exact scoped release pin and a derived
+runnable or disabled reason from the same admission policy used by compilation.
+Builtin nodes are identified by family slug and the deployment's build digest;
+they do not carry a Plugin release pin.
 
-Grafy's bundled System families contain broadly reusable operations: Image,
-Sequence, Arithmetic, Text, Schema, Prompt, and Table. A bundled artifact type
-must have precise, producer-neutral meaning and be independently reusable. A
-bundled node must be broadly reusable, deterministic, dependency-light, and
-must not duplicate projection, conversion, mapping, or other edge/runtime behavior.
+Grafy's builtin families contain broadly reusable operations: Image, Sequence,
+Arithmetic, Text, Schema, and Table. A builtin artifact type must have precise,
+producer-neutral meaning and be independently reusable. A builtin node must be
+broadly reusable, deterministic, dependency-light, and must not duplicate
+projection, conversion, mapping, or other edge/runtime behavior.
 Image owns the producer-neutral `image.raster@1` artifact, its storage writer,
 and deterministic import of staged image uploads. Table owns the producer-neutral
 `table.data@1` artifact: stable ordered columns with duplicate-friendly display
@@ -413,9 +418,10 @@ embed this table and expose it through an explicit field projection; source-spec
 table interpretation remains with its producer.
 
 Sequence provides `Collect<T>`, Count, Slice, and Pick item; image- and
-text-specific collectors are not separate System nodes. Schema provides one
-recursive JSON Schema Builder, and Prompt provides deterministic prompt-message
-construction; provider-backed execution remains an optional System Plugin.
+text-specific collectors are not separate builtin nodes. Schema provides one
+recursive JSON Schema Builder, and the LLM Plugin provides deterministic
+prompt-message construction; provider-backed execution remains an optional
+System Plugin.
 OCR table fragments remain OCR-owned because deciding how Markdown rows become
 headers, columns, and inferred values is a source-specific normalization rather
 than a shape-preserving artifact conversion. Optional System families provide

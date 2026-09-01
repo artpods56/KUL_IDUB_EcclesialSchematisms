@@ -52,7 +52,7 @@ from pydantic import SecretStr
 
 from grafy_client import GrafyClient, GraphBuilder
 from grafy_core.artifacts import NoConfig
-from grafy_plugin_image.nodes import (
+from grafy_workbench.image.nodes import (
     ImageUploadConfig,
     ImageUploadItem,
     UploadImagesNode,
@@ -61,12 +61,12 @@ from grafy_plugin_llm.openai_compatible import (
     OpenAICompatibleConfig,
     OpenAICompatibleNode,
 )
-from grafy_plugin_prompt.nodes import (
+from grafy_plugin_llm.prompt import (
     CreatePromptMessageNode,
     PromptMessageConfig,
 )
-from grafy_plugin_sequence.nodes import CollectNode
-from grafy_plugin_text.nodes import TextInputConfig, TextInputNode
+from grafy_workbench.sequence.nodes import CollectNode
+from grafy_workbench.text.nodes import TextInputConfig, TextInputNode
 
 
 async def main() -> None:

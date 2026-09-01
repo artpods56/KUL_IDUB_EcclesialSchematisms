@@ -68,14 +68,8 @@ flowchart LR
 | `grafy_core` | `libs/core/src/grafy_core` | Domain aggregates, ports, application services, runtime primitives, Plugin and producer-neutral artifact contracts, Module boundaries. |
 | `grafy_persistence` | `libs/persistence/src/grafy_persistence` | Async SQLAlchemy repositories, unit-of-work adapters, ORM mappings, Alembic schema. |
 | `grafy_storage` | `libs/storage/src/grafy_storage` | Local and S3-compatible object stores. |
-| `grafy_plugin_arithmetic` | `plugins/arithmetic` | Integer scalar artifact and arithmetic nodes; scalar resolver/writer registration. |
-| `grafy_plugin_image` | `plugins/image` | Raster image artifact, upload node, and image resolver/writer registration. |
-| `grafy_plugin_sequence` | `plugins/sequence` | Generic collect, count, slice, and pick operators. |
-| `grafy_plugin_text` | `plugins/text` | Text and Markdown artifacts and text operators; scalar resolver/writer registrations. |
-| `grafy_plugin_schema` | `plugins/schema` | JSON Schema artifact and interactive schema-builder operator. |
-| `grafy_plugin_prompt` | `plugins/prompt` | Prompt message artifact and deterministic prompt-construction operator. |
-| `grafy_plugin_table` | `plugins/table` | Table import, projection, and export operators; portable table-bundle resolver/writer registration. |
-| `grafy_plugin_llm` | `plugins/llm` | OpenAI-compatible Chat Completions node. |
+| `grafy_workbench` | `libs/workbench` | App-owned builtin families: arithmetic, image, sequence, text, schema, and table. |
+| `grafy_plugin_llm` | `plugins/llm` | OpenAI-compatible Chat Completions node and deterministic prompt-message construction. |
 | `grafy_plugin_ocr` | `plugins/ocr` | OCR page node; Tesseract adapter. |
 | `grafy_plugin_gis` | `plugins/gis` | WGS84 vector sources, georeferenced raster scans, OGC WFS/WMS integration, map-layer recipes. |
 | `grafy_plugin_sql` | `plugins/sql` | Parameterized statement artifacts, PostgreSQL batch executor, DuckDB join executor. |

@@ -21,7 +21,10 @@ This is a single-context repo:
 │   ├── 0001-workbench-feature-architecture.md
 │   ├── 0002-server-authoritative-workbench-collaboration.md
 │   ├── 0003-authenticate-users-and-scope-collaboration-to-workspaces.md
-│   └── 0004-unify-system-and-workspace-plugin-releases.md
+│   ├── 0004-unify-system-and-workspace-plugin-releases.md
+│   ├── 0005-separate-plugin-releases-from-installations.md
+│   ├── 0006-authenticate-plugin-publication-with-scoped-tokens.md
+│   └── 0007-builtin-families-are-application-code.md
 ├── apps/
 └── libs/
 ```

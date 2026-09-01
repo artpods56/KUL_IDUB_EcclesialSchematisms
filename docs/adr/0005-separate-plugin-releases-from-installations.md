@@ -1,12 +1,13 @@
 # ADR 0005: Separate Plugin releases from installations
 
 - **Status:** Accepted
+- **Amended by:** ADR 0007 (installations no longer carry System distribution
+  metadata)
 
 A Plugin release is one immutable, scope-neutral package and OCI artifact. An
 append-only Plugin installation assigns that release to System scope or one
-Workspace and owns the execution policy, System distribution metadata, and
-installing actor. A mutable Plugin selection points to the current installation
-for one scoped family.
+Workspace and owns the execution policy and installing actor. A mutable Plugin
+selection points to the current installation for one scoped family.
 
 This split lets one verified release run globally or in specific Workspaces
 without rebuilding it or rewriting immutable release data. Installation history

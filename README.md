@@ -52,9 +52,9 @@ flowchart LR
   adapters for saved graphs and graph materialization bindings. Alembic is the
   only schema authority.
 - `libs/storage` owns the local and S3-compatible object stores.
-- `plugins/arithmetic`, `plugins/image`, `plugins/prompt`, `plugins/schema`,
-  `plugins/sequence`, `plugins/table`, and `plugins/text` own the first-party
-  bundled System Plugin implementations and their release declarations.
+- `libs/workbench` owns the app-built-in node families: Arithmetic, Image,
+  Sequence, Text, Schema, and Table. These run in-process with the API and are
+  not Plugin packages.
 - `plugins/ocr` is an independently packaged System Plugin. It owns the OCR
   page node, its artifacts and persistence/resolution, and the Tesseract OCR
   adapter.
@@ -65,7 +65,7 @@ flowchart LR
 - `plugins/llm` owns provider-backed generation. Its generic OpenAI-compatible
   Chat Completions node wraps the official OpenAI Python SDK, consumes exact
   prompt messages and an optional runtime JSON Schema, and keeps credentials
-  outside core.
+  outside core. Deterministic prompt-message construction lives in this plugin.
 - `plugins/sql` owns engine-neutral parameterized statement artifacts, the
   existing atomic PostgreSQL batch executor, and an isolated DuckDB executor
   for joining materialized `table.data@1` artifacts. PostgreSQL connection
