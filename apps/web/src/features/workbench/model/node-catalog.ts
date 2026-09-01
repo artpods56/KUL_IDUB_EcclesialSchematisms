@@ -29,6 +29,8 @@ export type CatalogFilterKind =
   | "single"
   | "sequence"
   | "any-artifact"
+  | "source"
+  | "input-nodes"
   | "workspace-library";
 
 export type CatalogFilterId =
@@ -36,14 +38,18 @@ export type CatalogFilterId =
   | "single"
   | "sequence"
   | "any-artifact"
+  | "input-nodes"
   | "workspace-library"
-  | `artifact:${string}@${number}`;
+  | `artifact:${string}@${number}`
+  | `source:${string}`;
 
 export interface CatalogFilter {
   id: CatalogFilterId;
   kind: CatalogFilterKind;
   title: string;
   artifactKey?: ArtifactTypeKey;
+  /** Provider plugin slug, set for `source` filters. */
+  sourceKey?: string;
 }
 
 export interface ContextualRouteChoice {
@@ -77,6 +83,17 @@ export function artifactFilterId(key: ArtifactTypeKey): CatalogFilterId {
   return `artifact:${key.id}@${key.schema_version}`;
 }
 
+export function sourceFilterId(slug: string): CatalogFilterId {
+  return `source:${slug}`;
+}
+
+/** Restricts results to nodes that take no inputs because they are inputs themselves. */
+export const INPUT_NODES_FILTER: CatalogFilter = {
+  id: "input-nodes",
+  kind: "input-nodes",
+  title: "Input nodes",
+};
+
 function pluginFor(
   registry: NodeRegistry,
   slug: string,
@@ -97,7 +114,9 @@ function portDeclaresArtifact(port: Port, key: ArtifactTypeKey): boolean {
 }
 
 function portIsAnyArtifact(port: Port): boolean {
-  return portArtifactTypeVariable(port) != null && portArtifactType(port) == null;
+  return (
+    portArtifactTypeVariable(port) != null && portArtifactType(port) == null
+  );
 }
 
 function nodeDeclaresArtifact(spec: NodeSpec, key: ArtifactTypeKey): boolean {
@@ -106,10 +125,7 @@ function nodeDeclaresArtifact(spec: NodeSpec, key: ArtifactTypeKey): boolean {
   );
 }
 
-function nodeMatchesShapeFilter(
-  spec: NodeSpec,
-  shape: Port["shape"],
-): boolean {
+function nodeMatchesShapeFilter(spec: NodeSpec, shape: Port["shape"]): boolean {
   if (spec.outputs.some((port) => port.shape === shape)) return true;
   return spec.inputs.some((port) => acceptedPortShapes(port).includes(shape));
 }
@@ -119,13 +135,16 @@ function nodeMatchesAnyArtifact(spec: NodeSpec): boolean {
 }
 
 function isWorkspaceLibraryNode(spec: NodeSpec): boolean {
-  return Boolean(spec.module_graph_id || spec.plugin_slug === MODULE_PLUGIN_SLUG);
+  return Boolean(
+    spec.module_graph_id || spec.plugin_slug === MODULE_PLUGIN_SLUG,
+  );
 }
 
-function artifactTitle(
-  registry: NodeRegistry,
-  key: ArtifactTypeKey,
-): string {
+function isInputNode(spec: NodeSpec): boolean {
+  return spec.inputs.length === 0;
+}
+
+function artifactTitle(registry: NodeRegistry, key: ArtifactTypeKey): string {
   return (
     registry.artifact_types.find(
       (artifact) =>
@@ -135,16 +154,50 @@ function artifactTitle(
   );
 }
 
+/** Build the source categories: every provider plugin that ships nodes, plus the workspace library. */
+export function buildSourceFilters(
+  registry: NodeRegistry,
+): readonly CatalogFilter[] {
+  const slugsWithNodes = new Set(
+    registry.nodes.map((spec) => spec.plugin_slug),
+  );
+  const sources = registry.plugins
+    .filter(
+      (plugin) =>
+        plugin.entry_kind !== "module" && slugsWithNodes.has(plugin.slug),
+    )
+    .slice()
+    .sort(
+      (left, right) =>
+        left.title.localeCompare(right.title) ||
+        left.slug.localeCompare(right.slug),
+    );
+
+  return [
+    { id: "all", kind: "all", title: "All" },
+    ...sources.map(
+      (plugin): CatalogFilter => ({
+        id: sourceFilterId(plugin.slug),
+        kind: "source",
+        title: plugin.title || "System",
+        sourceKey: plugin.slug,
+      }),
+    ),
+    {
+      id: "workspace-library",
+      kind: "workspace-library",
+      title: "Workspace library",
+    },
+  ];
+}
+
 /** Build browse filters from registered artifact types plus fixed shape/library filters. */
 export function buildCatalogFilters(
   registry: NodeRegistry,
 ): readonly CatalogFilter[] {
   const titleCounts = new Map<string, number>();
   for (const artifact of registry.artifact_types) {
-    titleCounts.set(
-      artifact.title,
-      (titleCounts.get(artifact.title) ?? 0) + 1,
-    );
+    titleCounts.set(artifact.title, (titleCounts.get(artifact.title) ?? 0) + 1);
   }
 
   const artifactFilters = [...registry.artifact_types]
@@ -191,7 +244,9 @@ export function catalogNodesForFilter(
       return nodes;
     case "artifact":
       return filter.artifactKey
-        ? nodes.filter((spec) => nodeDeclaresArtifact(spec, filter.artifactKey!))
+        ? nodes.filter((spec) =>
+            nodeDeclaresArtifact(spec, filter.artifactKey!),
+          )
         : [];
     case "single":
       return nodes.filter((spec) => nodeMatchesShapeFilter(spec, "one"));
@@ -199,6 +254,12 @@ export function catalogNodesForFilter(
       return nodes.filter((spec) => nodeMatchesShapeFilter(spec, "many"));
     case "any-artifact":
       return nodes.filter(nodeMatchesAnyArtifact);
+    case "source":
+      return filter.sourceKey
+        ? nodes.filter((spec) => spec.plugin_slug === filter.sourceKey)
+        : [];
+    case "input-nodes":
+      return nodes.filter(isInputNode);
     case "workspace-library":
       return nodes.filter(isWorkspaceLibraryNode);
   }
@@ -272,13 +333,16 @@ export function searchCatalogNodes(
 
 export function filterAndSearchCatalogNodes(
   nodes: readonly NodeSpec[],
-  filter: CatalogFilter,
+  filters: readonly CatalogFilter[],
   query: string,
   registry: NodeRegistry,
 ): readonly NodeSpec[] {
-  return sortCatalogNodes(
-    searchCatalogNodes(catalogNodesForFilter(nodes, filter), query, registry),
+  const filtered = filters.reduce(
+    (acc, filter) =>
+      filter.kind === "all" ? acc : catalogNodesForFilter(acc, filter),
+    nodes,
   );
+  return sortCatalogNodes(searchCatalogNodes(filtered, query, registry));
 }
 
 export function catalogNodeSpecs(
@@ -343,7 +407,11 @@ export function moduleReleaseSpecs(
   return registry.nodes
     .filter((spec) => {
       if (moduleId && spec.module_id === moduleId) return true;
-      if (!moduleId && moduleGraphId && spec.module_graph_id === moduleGraphId) {
+      if (
+        !moduleId &&
+        moduleGraphId &&
+        spec.module_graph_id === moduleGraphId
+      ) {
         return true;
       }
       return false;
@@ -481,10 +549,7 @@ export function downstreamCandidatesFromOutput(options: {
         artifactTypes,
         conversions,
       );
-      const routes = routesForHandleFeed(
-        allRoutes,
-        sourceFeed ?? undefined,
-      );
+      const routes = routesForHandleFeed(allRoutes, sourceFeed ?? undefined);
       for (const route of routes) {
         choices.push({
           candidatePort: input as Port & { readonly direction: "input" },
@@ -582,14 +647,14 @@ function portsCanConnect(
 ): boolean {
   if (!shapesAreCompatible(source, target)) return false;
   if (portHasInstancePlugs(target) && !target.required) return false;
-  const plugId = portHasInstancePlugs(target)
-    ? "discovery-plug"
-    : undefined;
+  const plugId = portHasInstancePlugs(target) ? "discovery-plug" : undefined;
   return (
     connectionRoutesFor(
       {
         sourceHandle: encodeHandleId(portMetaForPort(source)),
-        targetHandle: encodeHandleId(portMetaForPort(target, target.shape, plugId)),
+        targetHandle: encodeHandleId(
+          portMetaForPort(target, target.shape, plugId),
+        ),
       },
       registry.artifact_types,
       registry.artifact_conversions,
