@@ -281,7 +281,7 @@ def _module_input_fragment(*, required: bool) -> tuple[SavedGraphRevision, RunRe
         document=SavedGraphDocument(
             nodes=(
                 SavedGraphNode(
-                    kind="builtin",
+                    kind="module",
                     id="module-input",
                     operator_id="module.input",
                     operator_version=1,
@@ -566,11 +566,12 @@ async def test_saved_fragment_requires_the_exact_plugin_release_pin() -> None:
             "nodes": tuple(
                 node.model_copy(
                     update={
+                        "kind": "plugin",
                         "plugin_release_pin": SavedGraphPluginReleasePin(
                             scope=PluginReleaseScope.SYSTEM,
                             slug=PREFLIGHT_PLUGIN.slug,
                             revision=1,
-                        )
+                        ),
                     }
                 )
                 if node.id == "target"
@@ -596,11 +597,12 @@ async def test_saved_fragment_requires_the_exact_plugin_release_pin() -> None:
     # The exact same pin is accepted.
     pinned_node = matching.nodes[0].model_copy(
         update={
+            "kind": "plugin",
             "plugin_release": PluginReleasePinModel(
                 scope=PluginReleaseScope.SYSTEM,
                 slug=PREFLIGHT_PLUGIN.slug,
                 revision=1,
-            )
+            ),
         }
     )
     await preflight.validate(
@@ -621,7 +623,9 @@ async def test_saved_fragment_requires_the_exact_plugin_release_pin() -> None:
             revision=1,
         ),
     ):
-        changed = matching.nodes[0].model_copy(update={"plugin_release": drifted})
+        changed = matching.nodes[0].model_copy(
+            update={"kind": "plugin", "plugin_release": drifted}
+        )
         with pytest.raises(GraphExecutionError, match="does not exist"):
             await preflight.validate(
                 WORKSPACE_ID,
@@ -689,11 +693,12 @@ async def test_isolated_secret_bindings_use_the_serialized_release_contract() ->
             "nodes": tuple(
                 node.model_copy(
                     update={
+                        "kind": "plugin",
                         "plugin_release_pin": SavedGraphPluginReleasePin(
                             scope=PluginReleaseScope.SYSTEM,
                             slug=PREFLIGHT_PLUGIN.slug,
                             revision=1,
-                        )
+                        ),
                     }
                 )
                 for node in graph.document.nodes

@@ -107,7 +107,12 @@ async def test_saved_multimodal_graph_executes_through_live_http_api() -> None:
         )
         terminal = await execution.wait(timeout=120, poll_interval=0.2)
 
-    assert terminal.status == "succeeded", terminal.error
+    failed_nodes = [
+        {"node_id": node.node_id, "status": node.status, "error": node.error}
+        for node in (terminal.result.node_runs if terminal.result is not None else ())
+        if node.status != "succeeded"
+    ]
+    assert terminal.status == "succeeded", terminal.error or failed_nodes
     assert terminal.result is not None
     assert terminal.result.status == "succeeded"
     assert {node.status for node in terminal.result.node_runs} == {"succeeded"}

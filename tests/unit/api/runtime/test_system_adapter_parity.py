@@ -506,8 +506,9 @@ async def test_same_exact_system_release_has_output_progress_cache_and_provenanc
     assert host_artifact.inline_payload == oci_artifact.inline_payload == {
         "value": "PARITY"
     }
-    assert host_artifact.metadata == oci_artifact.metadata
-    assert host_artifact.metadata["plugin_release"] == identity.provenance_document()
+    assert host_artifact.metadata["provenance"] == oci_artifact.metadata["provenance"]
+    assert oci_artifact.metadata["plugin_release"] == identity.provenance_document()
+    assert "plugin_release" not in host_artifact.metadata
     assert host_artifact.metadata["provenance"] == {
         "text": [
             {

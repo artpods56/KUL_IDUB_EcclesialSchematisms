@@ -888,7 +888,7 @@ async def test_accept_command_rebases_plugin_release_cas_against_newer_head() ->
     )
     next_pin = current_pin.model_copy(update={"revision": 2})
     node = SavedGraphNode(
-        kind="builtin",
+        kind="plugin",
         id="n1",
         operator_id="notes.write",
         operator_version=1,

@@ -655,7 +655,7 @@ def test_http_plugin_release_update_publishes_semantic_command(
             document=SavedGraphDocument(
                 nodes=(
                     SavedGraphNode(
-                        kind="builtin",
+                        kind="plugin",
                         id="n1",
                         operator_id="notes.write",
                         operator_version=1,

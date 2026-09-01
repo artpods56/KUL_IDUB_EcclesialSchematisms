@@ -482,7 +482,7 @@ def test_remove_local_workspace_renames_owned_tenant_and_preserves_data(
             {"id": folder_id, "workspace_id": local_id, "now": timestamp},
         )
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0025_platform_access_tokens")
     with create_engine(f"sqlite:///{database_path}").connect() as connection:
         workspace = (
             connection.execute(

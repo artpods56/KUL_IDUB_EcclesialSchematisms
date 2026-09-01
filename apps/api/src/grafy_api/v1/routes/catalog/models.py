@@ -909,21 +909,20 @@ class NodeRegistryResponse(ApiResponse):
                 *release.catalog.artifact_type_dependencies,
             ):
                 key = (contract.key.id, contract.key.schema_version)
+                installed = declared_host_artifacts.get(key)
+                if installed is not None:
+                    if contract != PluginArtifactTypeContract.from_spec(installed):
+                        raise ValueError(
+                            f"{release.scope.value.title()} Plugin {release.slug!r} "
+                            f"artifact type {key[0]}@{key[1]} conflicts with the "
+                            "host catalog contract"
+                        )
+                    continue
                 existing = serialized_artifact_contracts.get(key)
                 if existing is not None and existing != contract:
                     raise ValueError(
                         f"Plugin releases declare different exact contracts for "
                         f"artifact type {key[0]}@{key[1]}"
-                    )
-                installed = declared_host_artifacts.get(key)
-                if (
-                    installed is not None
-                    and contract != PluginArtifactTypeContract.from_spec(installed)
-                ):
-                    raise ValueError(
-                        f"{release.scope.value.title()} Plugin {release.slug!r} "
-                        f"artifact type {key[0]}@{key[1]} conflicts with the "
-                        "host catalog contract"
                     )
                 serialized_artifact_contracts.setdefault(key, contract)
 

@@ -33,13 +33,11 @@ from grafy_api.plugin_publication import SystemPluginPublicationWorkflow
 from grafy_api.plugin_publishing import PluginDirectoryPublisher
 from grafy_api.settings import get_settings
 from grafy_api.storage import configured_file_storage
-from grafy_api.system_plugin_deployment import SystemPluginDeploymentManifestBuilder
 from grafy_api.system_plugin_inventory import (
     CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH,
     load_system_plugin_inventory,
 )
 from grafy_api.system_plugin_loader import (
-    SystemPluginDeploymentEntry,
     SystemPluginDeploymentManifest,
     write_system_plugin_deployment_manifest,
 )
@@ -47,12 +45,6 @@ from grafy_api.system_plugin_loader import (
 
 E2E_USER_ID = UUID("00000000-0000-4000-8000-000000000001")
 E2E_WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000000002")
-HOST_PLUGIN_SLUGS = (
-    "builtin.image",
-    "builtin.prompt",
-    "builtin.sequence",
-    "builtin.text",
-)
 ISOLATED_PLUGIN_SLUGS = ("external.llm",)
 PAT_SCOPES = (
     WorkspaceCapability.VIEW_GRAPH,
@@ -181,7 +173,7 @@ async def publish_plugins(deployment_manifest_path: Path) -> None:
         repository_root = CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH.parents[1]
         actor = PlatformPluginActor("live-e2e-bootstrap")
         published_revisions: dict[str, int] = {}
-        for slug in (*HOST_PLUGIN_SLUGS, *ISOLATED_PLUGIN_SLUGS):
+        for slug in ISOLATED_PLUGIN_SLUGS:
             entry = inventory.entry_for(slug)
             verified = await asyncio.to_thread(
                 publisher.verify,
@@ -195,41 +187,12 @@ async def publish_plugins(deployment_manifest_path: Path) -> None:
             )
             published_revisions[slug] = release.revision
 
-        manifest_builder = SystemPluginDeploymentManifestBuilder(database.sessions)
-        host_entries: list[SystemPluginDeploymentEntry] = []
-        partials = deployment_manifest_path.parent / "partials"
-        for slug in HOST_PLUGIN_SLUGS:
-            manifest = await manifest_builder.build(
-                inventory,
-                repository_root=repository_root,
-                output=partials / f"{slug}.json",
-                slug=slug,
-                revision=published_revisions[slug],
-            )
-            host_entries.extend(manifest.plugins)
-        deployment_manifest = SystemPluginDeploymentManifest(
-            plugins=tuple(host_entries)
-        )
         write_system_plugin_deployment_manifest(
             deployment_manifest_path,
-            deployment_manifest,
+            SystemPluginDeploymentManifest(plugins=()),
         )
-
-        promotion = SystemPluginPublicationWorkflow(
-            image_builder,
-            releases,
-            isolated_release_admission(
-                profile=profile,
-                egress_policy=settings.resolved_plugin_egress_policy,
-                network_policy=settings.resolved_network_policy,
-                system_host_bindings=tuple(
-                    plugin.binding for plugin in deployment_manifest.plugins
-                ),
-            ),
-            inventory,
-        )
-        for slug in (*HOST_PLUGIN_SLUGS, *ISOLATED_PLUGIN_SLUGS):
-            await promotion.promote(
+        for slug in ISOLATED_PLUGIN_SLUGS:
+            await workflow.promote(
                 slug=slug,
                 revision=published_revisions[slug],
                 platform_actor=actor,

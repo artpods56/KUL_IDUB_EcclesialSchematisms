@@ -15,7 +15,6 @@ from grafy_core.application.modules import ModuleLibraryService
 from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
-from grafy_core.domain.plugin_releases import PluginReleaseScope
 from grafy_core.domain.errors import NotFoundError, UserDisabledError
 from grafy_core.domain.identity import ActorContext
 from grafy_core.domain.modules import GraphModuleReference
@@ -48,7 +47,6 @@ from grafy_api.settings import Settings
 from grafy_api.v1.models import (
     ArtifactTypeBindingModel,
     ArtifactTypeKeyResponse,
-    PluginReleasePinModel,
 )
 from grafy_api.v1.routes.executions.models import (
     RunEdgeRequest,
@@ -275,28 +273,26 @@ def _module_graph_payload(
     edges: list[SavedGraphEdgeModel],
     expected_revision: int | None = None,
 ) -> dict[str, object]:
-    slugs_by_operator = {
-        registration.key: plugin.slug
+    builtin_operators = {
+        registration.key
         for plugin in (*TEST_SYSTEM_PLUGINS, SECRET_MODULE_PLUGIN)
         for registration in plugin.nodes
     }
     pinned_nodes: list[SavedGraphNodeModel] = []
     for node in nodes:
-        slug = slugs_by_operator.get((node.operator_id, node.operator_version))
-        if slug is None:
-            pinned_nodes.append(node)
-            continue
-        pinned_nodes.append(
-            node.model_copy(
-                update={
-                    "plugin_release": PluginReleasePinModel(
-                        scope=PluginReleaseScope.SYSTEM,
-                        slug=slug,
-                        revision=1,
-                    )
-                }
+        if (node.operator_id, node.operator_version) in builtin_operators:
+            pinned_nodes.append(
+                node.model_copy(update={"kind": "builtin", "plugin_release": None})
             )
-        )
+            continue
+        if node.operator_id in {"module.input", "module.output"} or (
+            node.operator_id.startswith("graph.module.")
+        ):
+            pinned_nodes.append(
+                node.model_copy(update={"kind": "module", "plugin_release": None})
+            )
+            continue
+        pinned_nodes.append(node)
     document = _saved_graph_document(pinned_nodes, edges)
     if expected_revision is None:
         return CreateSavedGraphRequest(
@@ -334,6 +330,7 @@ def _text_module_payload(
         expected_revision=expected_revision,
         nodes=[
             SavedGraphNodeModel(
+                kind="module",
                 id="module-input",
                 operator_id="module.input",
                 operator_version=1,
@@ -346,6 +343,7 @@ def _text_module_payload(
                 artifact_type_bindings=_artifact_binding(),
             ),
             SavedGraphNodeModel(
+                kind="builtin",
                 id="replace",
                 operator_id=(
                     "test.module_progress" if emit_progress else "text.replace"
@@ -357,6 +355,7 @@ def _text_module_payload(
                 position=GraphPointModel(x=240, y=0),
             ),
             SavedGraphNodeModel(
+                kind="module",
                 id="module-output",
                 operator_id="module.output",
                 operator_version=1,
@@ -392,6 +391,7 @@ def _nested_map_progress_module_payload() -> dict[str, object]:
         name="Nested map progress",
         nodes=[
             SavedGraphNodeModel(
+                kind="module",
                 id="module-input",
                 operator_id="module.input",
                 operator_version=1,
@@ -400,6 +400,7 @@ def _nested_map_progress_module_payload() -> dict[str, object]:
                 artifact_type_bindings=_artifact_binding(),
             ),
             SavedGraphNodeModel(
+                kind="builtin",
                 id="split",
                 operator_id="text.split",
                 operator_version=1,
@@ -407,6 +408,7 @@ def _nested_map_progress_module_payload() -> dict[str, object]:
                 position=GraphPointModel(x=240, y=120),
             ),
             SavedGraphNodeModel(
+                kind="builtin",
                 id="progress",
                 operator_id="test.module_progress",
                 operator_version=1,
@@ -414,6 +416,7 @@ def _nested_map_progress_module_payload() -> dict[str, object]:
                 position=GraphPointModel(x=480, y=120),
             ),
             SavedGraphNodeModel(
+                kind="module",
                 id="module-output",
                 operator_id="module.output",
                 operator_version=1,
@@ -459,6 +462,7 @@ def _secret_module_payload(
         expected_revision=expected_revision,
         nodes=[
             SavedGraphNodeModel(
+                kind="module",
                 id="module-input",
                 operator_id="module.input",
                 operator_version=1,
@@ -467,6 +471,7 @@ def _secret_module_payload(
                 artifact_type_bindings=_artifact_binding(),
             ),
             SavedGraphNodeModel(
+                kind="builtin",
                 id="secret-gate",
                 operator_id="test.module_secret_gate",
                 operator_version=1,
@@ -474,6 +479,7 @@ def _secret_module_payload(
                 position=GraphPointModel(x=240, y=0),
             ),
             SavedGraphNodeModel(
+                kind="module",
                 id="module-output",
                 operator_id="module.output",
                 operator_version=1,
@@ -506,6 +512,7 @@ def _optional_input_module_payload() -> dict[str, object]:
         name="Optional suffix module",
         nodes=[
             SavedGraphNodeModel(
+                kind="module",
                 id="text-input",
                 operator_id="module.input",
                 operator_version=1,
@@ -514,6 +521,7 @@ def _optional_input_module_payload() -> dict[str, object]:
                 artifact_type_bindings=_artifact_binding(),
             ),
             SavedGraphNodeModel(
+                kind="module",
                 id="suffix-input",
                 operator_id="module.input",
                 operator_version=1,
@@ -522,6 +530,7 @@ def _optional_input_module_payload() -> dict[str, object]:
                 artifact_type_bindings=_artifact_binding(),
             ),
             SavedGraphNodeModel(
+                kind="builtin",
                 id="append",
                 operator_id="test.module_optional_suffix",
                 operator_version=1,
@@ -529,6 +538,7 @@ def _optional_input_module_payload() -> dict[str, object]:
                 position=GraphPointModel(x=240, y=0),
             ),
             SavedGraphNodeModel(
+                kind="builtin",
                 id="collect",
                 operator_id="sequence.collect",
                 operator_version=1,
@@ -541,6 +551,7 @@ def _optional_input_module_payload() -> dict[str, object]:
                 artifact_type_bindings=_artifact_binding(),
             ),
             SavedGraphNodeModel(
+                kind="builtin",
                 id="pick",
                 operator_id="sequence.item_at",
                 operator_version=1,
@@ -549,6 +560,7 @@ def _optional_input_module_payload() -> dict[str, object]:
                 artifact_type_bindings=_artifact_binding(),
             ),
             SavedGraphNodeModel(
+                kind="module",
                 id="module-output",
                 operator_id="module.output",
                 operator_version=1,
@@ -619,6 +631,7 @@ def _delegating_module_payload(
         expected_revision=expected_revision,
         nodes=[
             SavedGraphNodeModel(
+                kind="module",
                 id="module-input",
                 operator_id="module.input",
                 operator_version=1,
@@ -627,6 +640,7 @@ def _delegating_module_payload(
                 artifact_type_bindings=_artifact_binding(),
             ),
             SavedGraphNodeModel(
+                kind="module",
                 id="delegate",
                 operator_id=f"graph.module.{target_graph_id}",
                 operator_version=target_revision,
@@ -634,6 +648,7 @@ def _delegating_module_payload(
                 position=GraphPointModel(x=240, y=0),
             ),
             SavedGraphNodeModel(
+                kind="module",
                 id="module-output",
                 operator_id="module.output",
                 operator_version=1,
@@ -717,10 +732,13 @@ def test_saved_graph_module_is_discoverable_and_executes_once(
     assert {
         "slug": "graph.module",
         "title": "Workspace library",
+        "origin": "module",
         "entry_kind": "module",
         "scope": None,
         "plugin_release": None,
         "revision": None,
+        "publisher": None,
+        "installation_scope": None,
         "runnable": True,
         "non_runnable_reason": None,
         "non_runnable_detail": None,
@@ -1326,6 +1344,7 @@ def test_module_catalog_reports_invalid_boundary_wiring(
             document=_saved_graph_document(
                 [
                     SavedGraphNodeModel(
+                        kind="module",
                         id="module-input",
                         operator_id="module.input",
                         operator_version=1,
@@ -1366,16 +1385,12 @@ def test_module_catalog_ignores_graphs_without_module_boundaries(
             document=_saved_graph_document(
                 [
                     SavedGraphNodeModel(
+                        kind="builtin",
                         id="source",
                         operator_id="text.input",
                         operator_version=1,
                         config={"text": "hello"},
                         position=GraphPointModel(x=0, y=0),
-                        plugin_release=PluginReleasePinModel(
-                            scope=PluginReleaseScope.SYSTEM,
-                            slug="builtin.text",
-                            revision=1,
-                        ),
                     )
                 ],
             ),

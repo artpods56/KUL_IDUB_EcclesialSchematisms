@@ -167,6 +167,7 @@ def _graph_document() -> SavedGraphDocument:
         {
             "nodes": [
                 {
+                    "kind": "builtin",
                     "id": "known",
                     "operator_id": "text.concat",
                     "operator_version": 1,
@@ -175,6 +176,7 @@ def _graph_document() -> SavedGraphDocument:
                     "layout": {"width": 320},
                 },
                 {
+                    "kind": "builtin",
                     "id": "unknown",
                     "operator_id": "retired.missing",
                     "operator_version": 7,
@@ -182,6 +184,7 @@ def _graph_document() -> SavedGraphDocument:
                     "position": {"x": 56, "y": 78},
                 },
                 {
+                    "kind": "module",
                     "id": "module-input",
                     "operator_id": "module.input",
                     "operator_version": 1,
@@ -189,6 +192,7 @@ def _graph_document() -> SavedGraphDocument:
                     "position": {"x": 0, "y": 0},
                 },
                 {
+                    "kind": "module",
                     "id": "module-call",
                     "operator_id": "graph.module.call",
                     "operator_version": 2,
@@ -210,6 +214,7 @@ def _run_request() -> dict[str, object]:
         assert isinstance(node, dict)
         run_nodes.append(
             {
+                "kind": node["kind"],
                 "id": node["id"],
                 "operator_id": node["operator_id"],
                 "operator_version": node["operator_version"],

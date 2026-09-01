@@ -1,6 +1,7 @@
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from grafy_core.artifacts import ArtifactTypeKey
 from grafy_core.domain.collaboration import (
@@ -59,14 +60,16 @@ def _node(
     x: float = 0,
     y: float = 0,
     config: dict[str, object] | None = None,
+    plugin_release_pin: SavedGraphPluginReleasePin | None = None,
 ) -> SavedGraphNode:
     return SavedGraphNode(
-        kind="builtin",
+        kind="plugin" if plugin_release_pin is not None else "builtin",
         id=node_id,
         operator_id="example.operator",
         operator_version=1,
         position=GraphPoint(x=x, y=y),
         config=config or {},
+        plugin_release_pin=plugin_release_pin,
     )
 
 
@@ -257,7 +260,7 @@ def test_update_node_plugin_release_is_a_single_node_cas() -> None:
         revision=2,
     )
     target = SavedGraphNode(
-        kind="builtin",
+        kind="plugin",
         id="target",
         operator_id="notes.write",
         operator_version=1,
@@ -341,7 +344,7 @@ def test_update_node_plugin_release_rejects_missing_node_and_stale_pin() -> None
 
     current_pin = expected_pin.model_copy(update={"revision": 3})
     document = SavedGraphDocument(
-        nodes=(_node("target").model_copy(update={"plugin_release_pin": current_pin}),)
+        nodes=(_node("target", plugin_release_pin=current_pin),)
     )
     with pytest.raises(CollaborationCommandRejectedError) as stale:
         apply_graph_command(
@@ -378,7 +381,7 @@ def test_update_node_plugin_release_rejects_family_changes(
         revision=1,
     )
     document = SavedGraphDocument(
-        nodes=(_node("target").model_copy(update={"plugin_release_pin": current_pin}),)
+        nodes=(_node("target", plugin_release_pin=current_pin),)
     )
 
     with pytest.raises(CollaborationCommandRejectedError) as rejected:
@@ -482,7 +485,7 @@ def test_add_edge_and_sanitize_copy_document() -> None:
     module_document = SavedGraphDocument(
         nodes=(
             SavedGraphNode(
-                kind="builtin",
+                kind="module",
                 id="mod",
                 operator_id="graph.module." + str(uuid4()),
                 operator_version=1,
@@ -504,7 +507,7 @@ def test_cross_workspace_copy_preserves_system_pins_and_rejects_workspace_pins()
         revision=3,
     )
     system_document = SavedGraphDocument(
-        nodes=(_node().model_copy(update={"plugin_release_pin": system_pin}),)
+        nodes=(_node(plugin_release_pin=system_pin),)
     )
 
     copied = sanitize_document_for_cross_workspace_copy(system_document)
@@ -517,7 +520,7 @@ def test_cross_workspace_copy_preserves_system_pins_and_rejects_workspace_pins()
         revision=1,
     )
     workspace_document = SavedGraphDocument(
-        nodes=(_node().model_copy(update={"plugin_release_pin": workspace_pin}),)
+        nodes=(_node(plugin_release_pin=workspace_pin),)
     )
     with pytest.raises(CollaborationCommandRejectedError) as exc:
         sanitize_document_for_cross_workspace_copy(workspace_document)
@@ -675,15 +678,11 @@ def test_schema_builder_compound_rejects_partial_field_conflict() -> None:
     assert document.nodes[0].input_plugs[0].id == "a"
 
 
-def test_saved_graph_document_migrates_to_v5_with_empty_presentation() -> None:
-    document = SavedGraphDocument.model_validate(
-        {"schema_version": 3, "nodes": [], "edges": []}
-    )
-    assert document.schema_version == 5
-    assert document.presentation.viewers == ()
-    assert document.presentation.links == ()
-    assert document.presentation.bindings == ()
-    assert document.presentation.annotations == ()
+def test_saved_graph_document_rejects_legacy_schema_versions_without_migration() -> None:
+    with pytest.raises(ValidationError, match="is not supported"):
+        SavedGraphDocument.model_validate(
+            {"schema_version": 3, "nodes": [], "edges": []}
+        )
 
 
 def test_replace_and_move_artifact_viewers() -> None:

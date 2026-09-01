@@ -939,7 +939,7 @@ class DockerPluginRuntime(
             f"grafy-plugin-{str(key.scope_id.value)[:8]}-"
             f"{key.release_scope.value[:3]}-"
             f"{key.release_slug[:24]}-r{key.release_revision}-"
-            f"{key.source_digest[:8]}"
+            f"{_sandbox_key_sha256(key)[:16]}"
         )
         capability_profile = ",".join(
             capability.value for capability in key.required_capabilities

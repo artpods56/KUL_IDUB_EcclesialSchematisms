@@ -4,10 +4,28 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from uuid import UUID
 
-from grafy_core.domain.plugin_installations import InstalledPluginRelease
-from grafy_core.domain.plugin_releases import PluginReleaseScope
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
+)
+from grafy_core.domain.plugin_identity import PluginExecutionPolicy
+from grafy_core.domain.plugin_releases import (
+    PluginCapabilityManifest,
+    PluginCatalogManifest,
+    PluginRelease,
+    PluginReleaseNamespace,
+    PluginReleaseScope,
+    PluginRuntimeArtifact,
+    plugin_contract_digest,
+    plugin_profile_digest,
+    plugin_protocol_digest,
+)
 from grafy_core.domain.plugin_revocations import PluginReleaseRevocation
 from grafy_core.domain.plugin_selection import PluginReleaseSelection
+from grafy_core.domain.modules import (
+    MODULE_INPUT_OPERATOR_ID,
+    MODULE_OUTPUT_OPERATOR_ID,
+)
 from grafy_core.operators.modules import MODULE_BOUNDARY_REGISTRATIONS
 from grafy_core.plugins import Plugin, PluginRegistry, UnknownOperatorError
 from grafy_workbench import BUILTIN_FAMILIES
@@ -132,6 +150,10 @@ class SelectedSystemPluginDeployment:
                 node.operator_version,
             )
         except UnknownOperatorError:
+            if node.operator_id.startswith("graph.module."):
+                return node.model_copy(
+                    update={"kind": "module", "plugin_release": None}
+                )
             return node
         if registration.plugin_slug == "graph.module":
             return node.model_copy(update={"kind": "module", "plugin_release": None})
@@ -143,17 +165,85 @@ class SelectedSystemPluginDeployment:
         )
 
 
+def synthetic_system_release(
+    plugin: Plugin,
+    *,
+    revision: int = 1,
+) -> InstalledPluginRelease:
+    catalog = PluginCatalogManifest.from_plugin(plugin)
+    capabilities = PluginCapabilityManifest(
+        capabilities=tuple(
+            dict.fromkeys(
+                (
+                    *plugin.capabilities,
+                    *(
+                        capability
+                        for registration in plugin.nodes
+                        for capability in registration.required_capabilities
+                    ),
+                )
+            )
+        )
+    )
+    runtime = PluginRuntimeArtifact(
+        object_key=f"plugin-releases/system/{plugin.slug}/runtime.oci.tar",
+        archive_digest="a" * 64,
+        manifest_digest="b" * 64,
+        config_digest="c" * 64,
+    )
+    release = PluginRelease(
+        slug=catalog.slug,
+        revision=revision,
+        catalog=catalog,
+        contract_digest=plugin_contract_digest(catalog),
+        capabilities=capabilities,
+        capability_digest=capabilities.digest,
+        protocol_digest=plugin_protocol_digest(),
+        profile_digest=plugin_profile_digest("python-uv"),
+        source_object_key=f"plugin-releases/system/{plugin.slug}/source.tar.gz",
+        source_digest="d" * 64,
+        lock_digest="e" * 64,
+        runtime_profile="python-uv",
+        loader_target="grafy_plugin:PLUGIN",
+        runtime_image_digest=runtime.manifest_digest,
+        runtime_artifact=runtime,
+        published_by_platform_actor="test:system",
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.SYSTEM,
+                workspace_id=None,
+            ),
+            execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
+            installed_by_user_id=None,
+            installed_by_platform_actor="test:system",
+        ),
+    )
+
+
 def build_selected_system_plugin_deployment(
     plugins: Iterable[Plugin] = TEST_SYSTEM_PLUGINS,
 ) -> SelectedSystemPluginDeployment:
     registry = build_explicit_plugin_registry(plugins)
+    builtin_slugs = {family.slug for family in BUILTIN_FAMILIES}
+    releases = tuple(
+        synthetic_system_release(plugin)
+        for plugin in plugins
+        if plugin.slug not in builtin_slugs
+    )
+    selections = tuple(
+        PluginReleaseSelection.from_release(release) for release in releases
+    )
     return SelectedSystemPluginDeployment(
         registry=registry,
-        releases=(),
-        selections=(),
+        releases=releases,
+        selections=selections,
         host_bindings=(),
         loaded_plugins=(),
-        release_lookup=SelectedSystemReleaseLookup((), ()),
+        release_lookup=SelectedSystemReleaseLookup(releases, selections),
     )
 
 
@@ -168,6 +258,14 @@ def pin_selected_system_nodes(
     }
     pinned_nodes: list[RunNodeRequest] = []
     for node in nodes:
+        if node.operator_id in {
+            MODULE_INPUT_OPERATOR_ID,
+            MODULE_OUTPUT_OPERATOR_ID,
+        } or node.operator_id.startswith("graph.module."):
+            pinned_nodes.append(
+                node.model_copy(update={"kind": "module", "plugin_release": None})
+            )
+            continue
         slug = slugs_by_operator.get((node.operator_id, node.operator_version))
         if slug is None:
             pinned_nodes.append(node)

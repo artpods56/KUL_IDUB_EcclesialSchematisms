@@ -247,23 +247,25 @@ async def test_file_backed_sqlite_round_trips_saved_graph_in_a_fresh_session(
 
 
 @pytest.mark.asyncio
-async def test_legacy_sql_json_loads_then_updates_as_v5_in_a_fresh_session(
+async def test_sql_json_loads_then_updates_current_documents_in_a_fresh_session(
     database: Database,
 ) -> None:
     graph_id = UUID("00000000-0000-0000-0000-000000000102")
-    legacy_time = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
-    legacy_storage_time = legacy_time.replace(tzinfo=None).isoformat(" ")
-    legacy_document = {
-        "schema_version": 1,
+    stored_time = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
+    stored_storage_time = stored_time.replace(tzinfo=None).isoformat(" ")
+    stored_document = {
+        "schema_version": 6,
         "nodes": [
             {
+                "kind": "builtin",
                 "id": "source",
                 "operator_id": "text.input",
                 "operator_version": 1,
-                "config": {"text": "legacy"},
+                "config": {"text": "stored"},
                 "position": {"x": 0.0, "y": 0.0},
             },
             {
+                "kind": "builtin",
                 "id": "collect",
                 "operator_id": "sequence.collect",
                 "operator_version": 1,
@@ -295,18 +297,18 @@ async def test_legacy_sql_json_loads_then_updates_as_v5_in_a_fresh_session(
             {
                 "id": graph_id.hex,
                 "workspace_id": WORKSPACE_ID.hex,
-                "name": "Legacy graph",
-                "document": json.dumps(legacy_document),
+                "name": "Stored graph",
+                "document": json.dumps(stored_document),
                 "revision": 1,
-                "created_at": legacy_storage_time,
-                "updated_at": legacy_storage_time,
+                "created_at": stored_storage_time,
+                "updated_at": stored_storage_time,
             },
         )
 
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
         loaded = await unit_of_work.graphs.get(WORKSPACE_ID, graph_id)
         assert loaded is not None
-        assert loaded.document.schema_version == 5
+        assert loaded.document.schema_version == 6
         assert loaded.document.edges[0].conversion_path == (
             SavedGraphConversion(id="example.text.normalize", version=2),
         )
@@ -323,7 +325,7 @@ async def test_legacy_sql_json_loads_then_updates_as_v5_in_a_fresh_session(
             }
         )
         loaded.replace(
-            name="Migrated graph",
+            name="Updated graph",
             document=SavedGraphDocument(
                 nodes=(source, bound_collect),
                 edges=loaded.document.edges,
@@ -339,7 +341,7 @@ async def test_legacy_sql_json_loads_then_updates_as_v5_in_a_fresh_session(
         )
     assert isinstance(raw_document, str)
     stored_document = json.loads(raw_document)
-    assert stored_document["schema_version"] == 5
+    assert stored_document["schema_version"] == 6
     assert "conversion" not in stored_document["edges"][0]
     assert stored_document["edges"][0]["conversion_path"] == [
         {"id": "example.text.normalize", "version": 2}
@@ -349,9 +351,9 @@ async def test_legacy_sql_json_loads_then_updates_as_v5_in_a_fresh_session(
         reloaded = await unit_of_work.graphs.get(WORKSPACE_ID, graph_id)
 
     assert reloaded is not None
-    assert reloaded.name == "Migrated graph"
+    assert reloaded.name == "Updated graph"
     assert reloaded.revision == 2
-    assert reloaded.document.schema_version == 5
+    assert reloaded.document.schema_version == 6
     assert reloaded.document.nodes[1].artifact_type_binding_map() == {
         "T": ArtifactTypeKey("scalar.text", 1)
     }

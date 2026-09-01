@@ -14,6 +14,7 @@ COPY libs/client ./libs/client
 COPY libs/core ./libs/core
 COPY libs/persistence ./libs/persistence
 COPY libs/storage ./libs/storage
+COPY libs/workbench ./libs/workbench
 COPY plugins ./plugins
 COPY apps/api ./apps/api
 COPY infra/db ./infra/db

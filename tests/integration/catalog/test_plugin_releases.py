@@ -191,6 +191,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
     assert notes_plugin == {
         "slug": "notes",
         "title": "Notes",
+        "origin": "plugin",
         "entry_kind": "plugin",
         "scope": "workspace",
         "plugin_release": {
@@ -199,6 +200,8 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
             "revision": 5,
         },
         "revision": 5,
+        "publisher": str(TEST_USER_ID),
+        "installation_scope": "workspace",
         "runnable": False,
         "non_runnable_reason": "missing_runtime_artifact",
         "non_runnable_detail": "This release has no immutable runtime image.",

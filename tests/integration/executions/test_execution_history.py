@@ -10,7 +10,6 @@ from sqlalchemy import create_engine, text
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.domain.execution_history import GraphExecution
 from grafy_core.domain.saved_graphs import SavedGraphDocument
-from grafy_core.domain.plugin_releases import PluginReleaseScope
 from grafy_persistence.unit_of_work import (
     SqlAlchemySavedGraphUnitOfWork,
     SqlAlchemyUnitOfWork,
@@ -26,7 +25,6 @@ from tests.support.system_plugins import (
     build_explicit_plugin_registry,
     selected_system_run_node as RunNodeRequest,
 )
-from grafy_api.v1.models import PluginReleasePinModel
 from tests.support.clients import GrafyApi
 from grafy_api.v1.routes.saved_graphs.models import (
     CreateSavedGraphRequest,
@@ -51,16 +49,12 @@ WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 def _saved_text_graph_nodes(text: str) -> list[SavedGraphNodeModel]:
     return [
         SavedGraphNodeModel(
+            kind="builtin",
             id="text",
             operator_id="text.input",
             operator_version=1,
             config={"text": text},
             position=GraphPointModel(x=0, y=0),
-            plugin_release=PluginReleasePinModel(
-                scope=PluginReleaseScope.SYSTEM,
-                slug="builtin.text",
-                revision=1,
-            ),
         )
     ]
 

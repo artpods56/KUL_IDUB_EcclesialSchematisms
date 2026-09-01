@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from tests.support.identity import WORKSPACE_ID, browser_actor_override
+from grafy_workbench import BUILTIN_FAMILIES
 from grafy_api.v1.routes.auth.dependencies import browser_actor, workspace_actor
 from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
 from grafy_api.v1.routes.executions.models import (
@@ -94,12 +95,18 @@ def test_application_lifespan_builds_and_releases_workbench_components(
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
         assert hasattr(application.state, "resources")
-        assert application.state.resources.plugin_registry.plugins == ()
-        assert {
-            node.key for node in application.state.resources.plugin_registry.nodes
-        } == {
+        registry = application.state.resources.plugin_registry
+        assert {plugin.slug for plugin in registry.plugins} == {
+            plugin.slug for plugin in BUILTIN_FAMILIES
+        }
+        assert {node.key for node in registry.nodes} == {
             ("module.input", 1),
             ("module.output", 1),
+            *(
+                registration.key
+                for plugin in BUILTIN_FAMILIES
+                for registration in plugin.nodes
+            ),
         }
 
     assert not hasattr(application.state, "resources")

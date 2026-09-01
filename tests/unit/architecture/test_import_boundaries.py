@@ -6,21 +6,23 @@ from typing import cast
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-SYSTEM_PLUGIN_FAMILIES = (
-    "arithmetic",
-    "image",
-    "sequence",
-    "text",
-    "schema",
-    "prompt",
-    "table",
+PUBLISHED_PLUGIN_FAMILIES = (
     "gis",
     "llm",
     "ocr",
     "sql",
 )
+WORKBENCH_FAMILIES = (
+    "arithmetic",
+    "image",
+    "sequence",
+    "text",
+    "schema",
+    "table",
+)
+SYSTEM_PLUGIN_FAMILIES = PUBLISHED_PLUGIN_FAMILIES
 SYSTEM_PLUGIN_IMPORTS = tuple(
-    f"grafy_plugin_{family}" for family in SYSTEM_PLUGIN_FAMILIES
+    f"grafy_plugin_{family}" for family in PUBLISHED_PLUGIN_FAMILIES
 )
 FORBIDDEN_CORE_IMPORTS = (
     "aiosqlite",
@@ -239,6 +241,7 @@ def test_system_plugins_do_not_import_other_plugin_implementations() -> None:
 def test_retained_python_sources_do_not_use_legacy_namespace() -> None:
     source_roots = (
         REPO_ROOT / "libs/core/src/grafy_core",
+        REPO_ROOT / "libs/workbench/src/grafy_workbench",
         *(
             REPO_ROOT / "plugins" / family / "src" / f"grafy_plugin_{family}"
             for family in SYSTEM_PLUGIN_FAMILIES
@@ -259,7 +262,7 @@ def test_retained_python_sources_do_not_use_legacy_namespace() -> None:
     assert offenders == []
 
 
-def test_converged_operator_implementations_are_owned_by_plugin_projects() -> None:
+def test_converged_operator_implementations_are_owned_by_the_application() -> None:
     for module in (
         "arithmetic.py",
         "images.py",
@@ -271,7 +274,11 @@ def test_converged_operator_implementations_are_owned_by_plugin_projects() -> No
     ):
         assert not (REPO_ROOT / "libs/core/src/grafy_core/operators" / module).exists()
 
-    for family in SYSTEM_PLUGIN_FAMILIES:
+    for family in WORKBENCH_FAMILIES:
+        assert (REPO_ROOT / "libs/workbench/src/grafy_workbench" / family).is_dir()
+        assert not (REPO_ROOT / "plugins" / family).exists()
+
+    for family in PUBLISHED_PLUGIN_FAMILIES:
         project_root = REPO_ROOT / "plugins" / family
         document = tomllib.loads((project_root / "pyproject.toml").read_text())
         project = cast(dict[str, object], document["project"])

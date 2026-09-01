@@ -32,6 +32,7 @@ from tests.support.identity import TEST_USER_ID, WORKSPACE_ID
 def _graph_nodes() -> list[SavedGraphNodeModel]:
     return [
         SavedGraphNodeModel(
+            kind="builtin",
             id="source",
             operator_id="plugin.source",
             operator_version=1,
@@ -40,6 +41,7 @@ def _graph_nodes() -> list[SavedGraphNodeModel]:
             layout=SavedGraphNodeLayoutModel(width=420.0, body_height=180.0),
         ),
         SavedGraphNodeModel(
+            kind="builtin",
             id="target",
             operator_id="plugin.target",
             operator_version=1,
@@ -121,6 +123,7 @@ def _raw_graph_payload(name: str = "Draft graph") -> dict[str, object]:
         "name": name,
         "nodes": [
             {
+                "kind": "builtin",
                 "id": "source",
                 "operator_id": "plugin.source",
                 "operator_version": 1,
@@ -135,6 +138,7 @@ def _raw_graph_payload(name: str = "Draft graph") -> dict[str, object]:
                 "artifact_type_bindings": [],
             },
             {
+                "kind": "builtin",
                 "id": "target",
                 "operator_id": "plugin.target",
                 "operator_version": 1,
@@ -188,7 +192,7 @@ def _canonical_raw_graph_payload(name: str = "Draft graph") -> dict[str, object]
     return {
         "name": payload.pop("name"),
         "document": {
-            "schema_version": 5,
+            "schema_version": 6,
             "nodes": payload.pop("nodes"),
             "edges": payload.pop("edges"),
             "presentation": payload.pop("presentation"),
@@ -229,7 +233,7 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
     assert created["name"] == "Parish index draft"
     assert created["revision"] == 1
     document = created["document"]
-    assert document["schema_version"] == 5
+    assert document["schema_version"] == 6
     assert len(document["nodes"]) == 2
     assert len(document["edges"]) == 1
     assert document["nodes"][0]["input_plugs"] == []

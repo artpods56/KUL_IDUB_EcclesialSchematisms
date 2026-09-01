@@ -542,6 +542,54 @@ async def test_untrusted_artifact_sql_keeps_network_none(
 
 
 @pytest.mark.asyncio
+async def test_sandbox_variants_of_one_release_use_distinct_container_names(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(tmp_path)
+    created_ids = 0
+    names: list[str] = []
+
+    async def docker(
+        arguments: tuple[str, ...],
+        **_kwargs: object,
+    ) -> DockerPluginRuntime._Completed:  # pyright: ignore[reportPrivateUsage]
+        nonlocal created_ids
+        if arguments[0] == "create":
+            created_ids += 1
+            if f"sha256:{_artifact().manifest_digest}" in arguments:
+                names.append(arguments[arguments.index("--name") + 1])
+            return DockerPluginRuntime._Completed(  # pyright: ignore[reportPrivateUsage]
+                0, f"container-{created_ids}\n".encode(), b""
+            )
+        return DockerPluginRuntime._Completed(0, b"", b"")  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(socket, "getaddrinfo", _public_answers)
+    monkeypatch.setattr(runtime, "_docker", docker)
+    scope_id = PluginSandboxScopeId.new()
+    await runtime._create_container(  # pyright: ignore[reportPrivateUsage]
+        _key(scope_id=scope_id),
+        _artifact(),
+        tmp_path,
+    )
+    await runtime._create_container(  # pyright: ignore[reportPrivateUsage]
+        _key(
+            PluginRuntimeCapability.NETWORK_EGRESS,
+            scope_id=scope_id,
+            network_profile_digest="d" * 64,
+            http_destinations=(
+                PluginEgressDestination.parse("https://api.example.com:443"),
+            ),
+        ),
+        _artifact(),
+        tmp_path,
+    )
+
+    assert len(names) == 2
+    assert names[0] != names[1]
+
+
+@pytest.mark.asyncio
 async def test_cancelled_egress_creation_removes_broker_container_and_networks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

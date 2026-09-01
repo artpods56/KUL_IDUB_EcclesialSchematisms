@@ -43,6 +43,8 @@ from grafy_core.operators.modules import MODULE_BOUNDARY_REGISTRATIONS
 from grafy_workbench.arithmetic import ARITHMETIC
 from grafy_core.artifact_contracts import INTEGER_VALUE, RASTER_IMAGE, TEXT_VALUE
 from grafy_core.table_contracts import TABLE_DATA
+from grafy_core.schema_contracts import JSON_SCHEMA
+from grafy_workbench import BuiltinNodeCatalog
 from grafy_workbench.text import TEXT
 from grafy_core.plugins import Plugin, PluginRegistry
 from grafy_core.ports.modules import GraphModuleExecutionResult
@@ -151,7 +153,7 @@ def _release(
     )
     artifact_type_dependencies = [
         PluginArtifactTypeContract.from_spec(spec)
-        for spec in (TABLE_DATA, TEXT_VALUE, RASTER_IMAGE)
+        for spec in (TABLE_DATA, TEXT_VALUE, RASTER_IMAGE, JSON_SCHEMA)
         if spec.key.id in {input_type, output_type}
     ]
     if input_type == "other.private_type":
@@ -639,6 +641,30 @@ def test_system_release_accepts_exact_installed_foreign_artifact_dependency() ->
     }
     assert ("scalar.integer", 1) in response_keys
     assert ("scalar.text", 1) in response_keys
+
+
+def test_plugin_dependency_on_host_artifact_keeps_expanded_host_contract() -> None:
+    registry = BuiltinNodeCatalog.load("a" * 64).registry
+
+    response = NodeRegistryResponse.from_registry(
+        registry,
+        GraphModuleCatalogListing(entries=[], unavailable=[]),
+        UnusedModuleExecutor(),
+        [_release(input_type="json.schema", output_type="json.schema")],
+        workspace_id=WORKSPACE_ID,
+    )
+
+    schema = next(
+        artifact
+        for artifact in response.artifact_types
+        if artifact.key.id == "json.schema"
+    )
+    assert schema.field_projections
+    assert {plugin.slug for plugin in response.plugins} >= {
+        "graph.module",
+        "schema",
+        "notes",
+    }
 
 
 def test_system_release_rejects_same_key_with_different_host_artifact_contract() -> (

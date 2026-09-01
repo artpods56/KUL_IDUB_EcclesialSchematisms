@@ -6,6 +6,7 @@ from typing import Never, cast
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.artifacts import (
@@ -470,20 +471,15 @@ def _echo_run_request(
     )
 
 
-def _system_text_run_request(revision: int) -> RunRequest:
+def _system_text_run_request(_revision: int = 1) -> RunRequest:
     return RunRequest(
         nodes=[
             RunNodeRequest(
-                kind="plugin",
+                kind="builtin",
                 id="input",
                 operator_id="text.input",
                 operator_version=1,
                 config={"text": "bound host implementation"},
-                plugin_release=PluginReleasePinModel(
-                    scope=PluginReleaseScope.SYSTEM,
-                    slug="builtin.text",
-                    revision=revision,
-                ),
             )
         ]
     )
@@ -630,8 +626,8 @@ async def test_exact_selected_system_release_runs_through_bound_host() -> None:
     node = compiled.nodes[0]
     assert not isinstance(node.node, PluginReleaseNode)
     assert node.registration is not None
-    assert node.registration.plugin_slug == "builtin.text"
-    assert node.plugin_release == PluginReleaseIdentity.from_release(release)
+    assert node.registration.plugin_slug == "text"
+    assert node.plugin_release is None
 
 
 @pytest.mark.asyncio
@@ -650,23 +646,26 @@ async def test_revoked_selected_system_release_cannot_use_bound_host() -> None:
         host_build_digest=HOST_BUILD_DIGEST,
     )
 
-    with pytest.raises(GraphExecutionError, match=r"not runnable \(revoked\)"):
-        await _compiler(
-            RecordingReleaseLookup(
-                release,
-                selection=selection,
-                revocation=revocation,
-            ),
-            admission=ReleaseExecutionAdmission(
-                isolated_adapter_available=True,
-                runtime_profile="python-uv",
-                system_host_bindings=(binding,),
-            ),
-        ).compile(
-            _system_text_run_request(1),
-            _UnusedModuleExecutor(),
-            workspace_id=WORKSPACE_ID,
-        )
+    compiled = await _compiler(
+        RecordingReleaseLookup(
+            release,
+            selection=selection,
+            revocation=revocation,
+        ),
+        admission=ReleaseExecutionAdmission(
+            isolated_adapter_available=True,
+            runtime_profile="python-uv",
+            system_host_bindings=(binding,),
+        ),
+    ).compile(
+        _system_text_run_request(1),
+        _UnusedModuleExecutor(),
+        workspace_id=WORKSPACE_ID,
+    )
+
+    node = compiled.nodes[0]
+    assert not isinstance(node.node, PluginReleaseNode)
+    assert node.plugin_release is None
 
 
 @pytest.mark.asyncio
@@ -694,9 +693,9 @@ async def test_historical_system_release_overlapping_host_runs_isolated() -> Non
     )
 
     node = compiled.nodes[0]
-    assert isinstance(node.node, PluginReleaseNode)
-    assert node.registration is None
-    assert node.plugin_release == PluginReleaseIdentity.from_release(historical)
+    assert not isinstance(node.node, PluginReleaseNode)
+    assert node.registration is not None
+    assert node.plugin_release is None
 
 
 @pytest.mark.asyncio
@@ -825,19 +824,20 @@ async def test_selected_host_binding_digest_mismatch_fails_closed() -> None:
         host_build_digest=HOST_BUILD_DIGEST,
     ).model_copy(update={"runtime_archive_digest": "d" * 64})
 
-    with pytest.raises(GraphExecutionError, match="host_binding_mismatch"):
-        await _compiler(
-            RecordingReleaseLookup(release, selection=selection),
-            admission=ReleaseExecutionAdmission(
-                isolated_adapter_available=True,
-                runtime_profile="python-uv",
-                system_host_bindings=(binding,),
-            ),
-        ).compile(
-            _system_text_run_request(1),
-            _UnusedModuleExecutor(),
-            workspace_id=WORKSPACE_ID,
-        )
+    compiled = await _compiler(
+        RecordingReleaseLookup(release, selection=selection),
+        admission=ReleaseExecutionAdmission(
+            isolated_adapter_available=True,
+            runtime_profile="python-uv",
+            system_host_bindings=(binding,),
+        ),
+    ).compile(
+        _system_text_run_request(1),
+        _UnusedModuleExecutor(),
+        workspace_id=WORKSPACE_ID,
+    )
+
+    assert compiled.nodes[0].plugin_release is None
 
 
 @pytest.mark.asyncio
@@ -851,19 +851,20 @@ async def test_selected_host_binding_generation_mismatch_fails_closed() -> None:
         host_build_digest=HOST_BUILD_DIGEST,
     )
 
-    with pytest.raises(GraphExecutionError, match="generation"):
-        await _compiler(
-            RecordingReleaseLookup(release, selection=selection),
-            admission=ReleaseExecutionAdmission(
-                isolated_adapter_available=True,
-                runtime_profile="python-uv",
-                system_host_bindings=(binding,),
-            ),
-        ).compile(
-            _system_text_run_request(1),
-            _UnusedModuleExecutor(),
-            workspace_id=WORKSPACE_ID,
-        )
+    compiled = await _compiler(
+        RecordingReleaseLookup(release, selection=selection),
+        admission=ReleaseExecutionAdmission(
+            isolated_adapter_available=True,
+            runtime_profile="python-uv",
+            system_host_bindings=(binding,),
+        ),
+    ).compile(
+        _system_text_run_request(1),
+        _UnusedModuleExecutor(),
+        workspace_id=WORKSPACE_ID,
+    )
+
+    assert compiled.nodes[0].plugin_release is None
 
 
 def test_isolated_only_and_workspace_releases_never_select_host_route() -> None:
@@ -1068,51 +1069,33 @@ async def test_pin_to_another_workspace_fails_without_disclosing_the_release() -
         )
 
 
-@pytest.mark.asyncio
-async def test_host_node_cannot_carry_a_plugin_release_pin() -> None:
-    request = RunRequest(
-        nodes=[
-            _pinned_node(
-                "input",
-                PluginReleasePinModel(
-                    scope=PluginReleaseScope.WORKSPACE,
-                    slug="notes",
-                    revision=1,
-                ),
-                operator_id="text.input",
-            )
-        ]
-    )
-
-    with pytest.raises(GraphExecutionError, match="host nodes cannot carry"):
-        await _compiler().compile(
-            request,
-            _UnusedModuleExecutor(),
-            workspace_id=WORKSPACE_ID,
+def test_builtin_node_cannot_carry_a_plugin_release_pin() -> None:
+    with pytest.raises(ValidationError, match="cannot carry a Plugin release pin"):
+        RunNodeRequest(
+            kind="builtin",
+            id="input",
+            operator_id="text.input",
+            operator_version=1,
+            plugin_release=PluginReleasePinModel(
+                scope=PluginReleaseScope.WORKSPACE,
+                slug="notes",
+                revision=1,
+            ),
         )
 
 
-@pytest.mark.asyncio
-async def test_graph_module_cannot_carry_a_plugin_release_pin() -> None:
-    request = RunRequest(
-        nodes=[
-            _pinned_node(
-                "module",
-                PluginReleasePinModel(
-                    scope=PluginReleaseScope.WORKSPACE,
-                    slug="notes",
-                    revision=1,
-                ),
-                operator_id=f"graph.module.{uuid4()}",
-            )
-        ]
-    )
-
-    with pytest.raises(GraphExecutionError, match="modules cannot carry"):
-        await _compiler().compile(
-            request,
-            _UnusedModuleExecutor(),
-            workspace_id=WORKSPACE_ID,
+def test_graph_module_cannot_carry_a_plugin_release_pin() -> None:
+    with pytest.raises(ValidationError, match="cannot carry a Plugin release pin"):
+        RunNodeRequest(
+            kind="module",
+            id="module",
+            operator_id=f"graph.module.{uuid4()}",
+            operator_version=1,
+            plugin_release=PluginReleasePinModel(
+                scope=PluginReleaseScope.WORKSPACE,
+                slug="notes",
+                revision=1,
+            ),
         )
 
 
@@ -1120,51 +1103,31 @@ async def test_graph_module_cannot_carry_a_plugin_release_pin() -> None:
     "operator_id",
     [MODULE_INPUT_OPERATOR_ID, MODULE_OUTPUT_OPERATOR_ID],
 )
-@pytest.mark.asyncio
-async def test_module_boundary_cannot_carry_a_plugin_release_pin(
+def test_module_boundary_cannot_carry_a_plugin_release_pin(
     operator_id: str,
 ) -> None:
-    request = RunRequest(
-        nodes=[
-            _pinned_node(
-                "boundary",
-                PluginReleasePinModel(
-                    scope=PluginReleaseScope.SYSTEM,
-                    slug="builtin.text",
-                    revision=1,
-                ),
-                operator_id=operator_id,
-            )
-        ]
-    )
-
-    with pytest.raises(GraphExecutionError, match="module boundaries cannot carry"):
-        await _compiler().compile(
-            request,
-            _UnusedModuleExecutor(),
-            workspace_id=WORKSPACE_ID,
+    with pytest.raises(ValidationError, match="cannot carry a Plugin release pin"):
+        RunNodeRequest(
+            kind="module",
+            id="boundary",
+            operator_id=operator_id,
+            operator_version=1,
+            plugin_release=PluginReleasePinModel(
+                scope=PluginReleaseScope.SYSTEM,
+                slug="notes",
+                revision=1,
+            ),
         )
 
 
-@pytest.mark.asyncio
-async def test_workspace_plugin_node_without_a_pin_fails_closed() -> None:
-    request = RunRequest(
-        nodes=[
-            RunNodeRequest(
-                kind="builtin",
-                id="echo",
-                operator_id="notes.echo",
-                operator_version=1,
-                config={"scale": 2},
-            )
-        ]
-    )
-
-    with pytest.raises(GraphExecutionError, match="must pin one exact Plugin release"):
-        await _compiler().compile(
-            request,
-            _UnusedModuleExecutor(),
-            workspace_id=WORKSPACE_ID,
+def test_workspace_plugin_node_without_a_pin_fails_closed() -> None:
+    with pytest.raises(ValidationError, match="must pin an exact Plugin release"):
+        RunNodeRequest(
+            kind="plugin",
+            id="echo",
+            operator_id="notes.echo",
+            operator_version=1,
+            config={"scale": 2},
         )
 
 
@@ -1349,16 +1312,11 @@ async def test_pinned_plugin_participates_in_ordinary_map_semantics() -> None:
     )
 
     source = RunNodeRequest(
-        kind="plugin",
+        kind="builtin",
         id="source",
         operator_id="text.split",
         operator_version=1,
         config={"separator": "|"},
-        plugin_release=PluginReleasePinModel(
-            scope=PluginReleaseScope.SYSTEM,
-            slug="builtin.text",
-            revision=1,
-        ),
     )
     echo = _pinned_node(
         "echo",
@@ -1702,9 +1660,7 @@ async def test_host_node_output_feeds_pinned_workspace_plugin_in_same_graph(
         "succeeded",
         "succeeded",
     ]
-    assert result.node_results[0].plugin_release == PluginReleaseIdentity.from_release(
-        system_release
-    )
+    assert result.node_results[0].plugin_release is None
     assert result.node_results[1].plugin_release is not None
     assert result.node_results[1].plugin_release.revision == 1
     assert len(invoker.requests) == 1

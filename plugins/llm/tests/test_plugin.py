@@ -13,5 +13,6 @@ def test_manifest_loader_target_preserves_system_identity_and_freezes() -> None:
     assert LLM.slug == "external.llm"
     assert {registration.key for registration in LLM.nodes} == {
         ("llm.openai_compatible.chat_completion", 1),
+        ("prompt.message.create", 2),
     }
     assert "grafy-core==0.1.0" in (requires("grafy-plugin-llm") or [])

@@ -21,7 +21,22 @@ from grafy_core.domain.saved_graphs import (
 )
 from grafy_core.domain.errors import SavedGraphRevisionConflictError
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
-from grafy_core.domain.plugin_releases import PluginReleaseScope
+from grafy_core.domain.plugin_identity import PluginExecutionPolicy
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
+)
+from grafy_core.domain.plugin_releases import (
+    PluginCapabilityManifest,
+    PluginCatalogManifest,
+    PluginRelease,
+    PluginReleaseNamespace,
+    PluginReleaseScope,
+    PluginRuntimeArtifact,
+    plugin_contract_digest,
+    plugin_profile_digest,
+    plugin_protocol_digest,
+)
 from grafy_core.nodes import Node, NodeExecutionContext
 from grafy_core.plugins import NodeSecretInput, Plugin, PluginRegistry
 from grafy_core.ports.node_secrets import NodeSecretUnavailableError
@@ -30,7 +45,6 @@ from grafy_persistence.database import Database, create_database
 from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
-from grafy_api.v1.models import PluginReleasePinModel
 from grafy_api.v1.routes.executions.models import RunNodeRequest, RunRequest
 from grafy_api.services.composition import (
     WorkbenchComponents,
@@ -48,7 +62,10 @@ from grafy_api.settings import Settings
 from grafy_api.v1.routes.node_secrets.dependencies import node_secret_service
 
 from tests.support.clients import GrafyApi
-from tests.support.system_plugins import build_selected_system_plugin_deployment
+from tests.support.system_plugins import (
+    SelectedSystemReleaseLookup,
+    build_selected_system_plugin_deployment,
+)
 from tests.support.workbench import workbench_dependency_overrides
 from tests.testkit import (
     client_with_overrides,
@@ -74,11 +91,6 @@ class EmptyOutput(NodeOutput):
 
 SECRET_TEST_PLUGIN = Plugin(slug="test.node-secrets", title="Node secrets test")
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
-PLUGIN_RELEASE_PIN = PluginReleasePinModel(
-    scope=PluginReleaseScope.SYSTEM,
-    slug=SECRET_TEST_PLUGIN.slug,
-    revision=1,
-)
 SAVED_PLUGIN_RELEASE_PIN = SavedGraphPluginReleasePin(
     scope=PluginReleaseScope.SYSTEM,
     slug=SECRET_TEST_PLUGIN.slug,
@@ -194,11 +206,12 @@ def _secret_document(
     model: str = "default-model",
     temperature: float = 0.0,
     position: GraphPoint | None = None,
+    plugin_release_pin: SavedGraphPluginReleasePin | None = None,
 ) -> SavedGraphDocument:
     return SavedGraphDocument(
         nodes=(
             SavedGraphNode(
-                kind="builtin",
+                kind="plugin" if plugin_release_pin is not None else "builtin",
                 id="llm",
                 operator_id="test.secret-node",
                 operator_version=1,
@@ -208,9 +221,53 @@ def _secret_document(
                     "temperature": temperature,
                 },
                 position=position or GraphPoint(x=0, y=0),
-                plugin_release_pin=SAVED_PLUGIN_RELEASE_PIN,
+                plugin_release_pin=plugin_release_pin,
             ),
         )
+    )
+
+
+def _isolated_secret_release() -> InstalledPluginRelease:
+    catalog = PluginCatalogManifest.from_plugin(SECRET_TEST_PLUGIN)
+    capabilities = PluginCapabilityManifest(
+        capabilities=(PluginRuntimeCapability.NODE_SECRETS,)
+    )
+    runtime = PluginRuntimeArtifact(
+        object_key="plugin-releases/system/test.node-secrets/runtime.oci.tar",
+        archive_digest="a" * 64,
+        manifest_digest="b" * 64,
+        config_digest="c" * 64,
+    )
+    release = PluginRelease(
+        slug=catalog.slug,
+        revision=1,
+        catalog=catalog,
+        contract_digest=plugin_contract_digest(catalog),
+        capabilities=capabilities,
+        capability_digest=capabilities.digest,
+        protocol_digest=plugin_protocol_digest(),
+        profile_digest=plugin_profile_digest("python-uv"),
+        source_object_key="plugin-releases/system/test.node-secrets/source.tar.gz",
+        source_digest="d" * 64,
+        lock_digest="e" * 64,
+        runtime_profile="python-uv",
+        loader_target="tests.integration.node_secrets:SECRET_TEST_PLUGIN",
+        runtime_image_digest=runtime.manifest_digest,
+        runtime_artifact=runtime,
+        published_by_platform_actor="test:secrets",
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.SYSTEM,
+                workspace_id=None,
+            ),
+            execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
+            installed_by_user_id=None,
+            installed_by_platform_actor="test:secrets",
+        ),
     )
 
 
@@ -478,14 +535,20 @@ async def test_pinned_isolated_operator_uses_release_contract_for_secret_binding
     ],
 ) -> None:
     database, _, saved_graphs, _ = node_secret_setup
-    graph = await _saved_secret_graph(saved_graphs)
-    deployment = build_selected_system_plugin_deployment((SECRET_TEST_PLUGIN,))
+    graph = await saved_graphs.create(
+        workspace_id=WORKSPACE_ID,
+        created_by_user_id=None,
+        name="Isolated extraction",
+        document=_secret_document(plugin_release_pin=SAVED_PLUGIN_RELEASE_PIN),
+    )
+    release = _isolated_secret_release()
+    lookup = SelectedSystemReleaseLookup((release,), ())
     host_registry = PluginRegistry()
     host_registry.freeze()
     service = NodeSecretService(
         unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
         plugin_registry=host_registry,
-        plugin_release_lookup=deployment.release_lookup,
+        plugin_release_lookup=lookup,
         encryption_key=_encryption_key(),
     )
 
@@ -857,11 +920,10 @@ async def test_saved_run_passes_validated_graph_context_to_node(
             secret_graph_revision=graph.revision,
             nodes=[
                 RunNodeRequest(
-                    kind="plugin",
+                    kind="builtin",
                     id="llm",
                     operator_id="test.secret-node",
                     operator_version=1,
-                    plugin_release=PLUGIN_RELEASE_PIN,
                     config={
                         "base_url": "https://llm.example/v1",
                         "model": "default-model",
@@ -908,11 +970,10 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
             secret_graph_revision=graph.revision,
             nodes=[
                 RunNodeRequest(
-                    kind="plugin",
+                    kind="builtin",
                     id="llm",
                     operator_id="test.secret-node",
                     operator_version=1,
-                    plugin_release=PLUGIN_RELEASE_PIN,
                     config={
                         "base_url": "https://llm.example/v1",
                         "model": "unsaved-model",
@@ -920,11 +981,10 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
                     },
                 ),
                 RunNodeRequest(
-                    kind="plugin",
+                    kind="builtin",
                     id="unsaved-plain",
                     operator_id="test.plain-node",
                     operator_version=1,
-                    plugin_release=PLUGIN_RELEASE_PIN,
                 ),
             ],
         ),
@@ -978,11 +1038,10 @@ async def test_secret_bearing_run_requires_explicit_secret_graph_context(
             RunRequest(
                 nodes=[
                     RunNodeRequest(
-                        kind="plugin",
+                        kind="builtin",
                         id="llm",
                         operator_id="test.secret-node",
                         operator_version=1,
-                        plugin_release=PLUGIN_RELEASE_PIN,
                         config={"base_url": "https://llm.example/v1"},
                     )
                 ]
@@ -1024,7 +1083,6 @@ async def test_dirty_run_rejects_invalid_saved_secret_binding(
                         operator_version=1,
                         config={},
                         position=GraphPoint(x=0, y=0),
-                        plugin_release_pin=SAVED_PLUGIN_RELEASE_PIN,
                     ),
                 )
             ),
@@ -1051,11 +1109,10 @@ async def test_dirty_run_rejects_invalid_saved_secret_binding(
                 secret_graph_revision=graph.revision,
                 nodes=[
                     RunNodeRequest(
-                        kind="plugin",
+                        kind="builtin",
                         id=submitted_node_id,
                         operator_id="test.secret-node",
                         operator_version=1,
-                        plugin_release=PLUGIN_RELEASE_PIN,
                         config={"base_url": base_url},
                     )
                 ],
