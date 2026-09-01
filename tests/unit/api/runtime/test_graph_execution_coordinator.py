@@ -1,6 +1,7 @@
 """Behavioral contracts for direct in-process graph execution."""
 
 import asyncio
+import logging
 from collections.abc import Mapping, Sequence
 from typing import Annotated, ClassVar, cast, override
 from uuid import UUID, uuid4
@@ -826,7 +827,13 @@ async def test_nested_execution_does_not_replace_outer_module_progress() -> None
 
 
 @pytest.mark.asyncio
-async def test_failed_nodes_expose_typed_failure_codes_in_graph_results() -> None:
+async def test_failed_nodes_expose_typed_failure_codes_in_graph_results(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(
+        logging.ERROR,
+        logger="grafy_api.v1.routes.executions.runtime.coordinator",
+    )
     writer = RecordingWriter()
     operator_node = _compiled_add(
         node_id="operator-failure",
@@ -938,6 +945,29 @@ async def test_failed_nodes_expose_typed_failure_codes_in_graph_results() -> Non
     adapter_error = result.node_results[2].error
     assert adapter_error is not None
     assert "is required" in adapter_error
+    failure_records = [
+        record for record in caplog.records if record.message == "node_execution_failed"
+    ]
+    assert [cast(str, record.__dict__["node_id"]) for record in failure_records] == [
+        "operator-failure",
+        "oci-failure",
+        "adapter-failure",
+    ]
+    assert [
+        cast(str, record.__dict__["failure_code"]) for record in failure_records
+    ] == [
+        PluginFailureCode.OPERATOR_FAILURE.value,
+        PluginFailureCode.OUTPUT_VALIDATION.value,
+        PluginFailureCode.INTERNAL_ADAPTER_FAILURE.value,
+    ]
+    assert all(
+        cast(str, record.__dict__["workspace_id"]) == str(WORKSPACE_ID)
+        for record in failure_records
+    )
+    assert all(
+        record.exc_info is not None or hasattr(record, "exception")
+        for record in failure_records
+    )
 
 
 @pytest.mark.asyncio

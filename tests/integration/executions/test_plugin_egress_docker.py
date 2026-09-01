@@ -433,6 +433,7 @@ async def test_docker_runtime_routes_historical_network_egress_through_live_brok
             ),
             network_policy=network_policy,
         )
+        await runtime.check_ready()
         unit_of_work = InMemoryUnitOfWork()
         invoker = ArtifactBundlePluginInvoker(
             unit_of_work=unit_of_work,

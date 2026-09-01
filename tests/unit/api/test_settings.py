@@ -18,6 +18,11 @@ def isolate_network_policy_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GRAFY_NETWORK_POLICY_MANIFEST", raising=False)
 
 
+def test_pytest_process_requires_explicit_external_plugin_runtime_opt_in() -> None:
+    assert Settings().plugin_runtime_enabled is False
+    assert Settings(plugin_runtime_enabled=True).plugin_runtime_enabled is True
+
+
 def test_default_workspace_does_not_reuse_legacy_data(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

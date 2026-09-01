@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+import logging
 from pathlib import Path
 from typing import Annotated, cast, final, override
 from uuid import UUID, uuid4
@@ -1066,7 +1067,13 @@ async def test_recovery_reloads_durable_queue_before_dispatch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_recovered_queue_revalidates_submitter_access_before_graph_code() -> None:
+async def test_recovered_queue_revalidates_submitter_access_before_graph_code(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(
+        logging.ERROR,
+        logger="grafy_api.v1.routes.executions.runtime.manager",
+    )
     run_graph = SequencedRunGraph()
     graph_id = uuid4()
     run_graph.add(graph_id)
@@ -1094,6 +1101,19 @@ async def test_recovered_queue_revalidates_submitter_access_before_graph_code() 
     assert failed.status == "failed"
     assert "no longer has execute access" in (failed.error or "")
     assert run_graph.started_order == []
+    failure_record = next(
+        record
+        for record in caplog.records
+        if record.message == "graph_execution_failed"
+    )
+    assert cast(str, failure_record.__dict__["workspace_id"]) == str(WORKSPACE_ID)
+    assert cast(str, failure_record.__dict__["execution_id"]) == str(execution_id)
+    assert cast(str, failure_record.__dict__["graph_id"]) == str(graph_id)
+    assert cast(int, failure_record.__dict__["graph_revision"]) == 1
+    assert failure_record.exc_info is not None or hasattr(
+        failure_record,
+        "exception",
+    )
     await manager.shutdown()
 
 

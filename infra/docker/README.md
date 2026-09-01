@@ -104,6 +104,12 @@ docker buildx imagetools inspect \
   registry.example/grafy/plugin-egress-broker:<version>
 ```
 
+Build the broker from the same Grafy revision as the API. The image declares
+its policy contract version, and the API checks that version during startup and
+on `/ready`. A missing or different version keeps the API out of service. Update
+the broker digest and the API image in the same deployment. Gate deployment
+traffic on `/ready`; `/health` does not validate the broker contract.
+
 Configure the resulting immutable reference and JSON arrays of exact
 `scheme://dns-name:port` destinations:
 

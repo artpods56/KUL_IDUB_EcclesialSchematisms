@@ -25,6 +25,15 @@ def _configure_command_hmac_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GRAFY_COMMAND_HMAC_KEY_VERSION", "1")
 
 
+@pytest.fixture(autouse=True)
+def _disable_external_plugin_runtime_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tests opt into the host Docker runtime instead of inheriting local .env."""
+
+    monkeypatch.setenv("GRAFY_PLUGIN_RUNTIME_ENABLED", "false")
+
+
 DEFAULT_DATABASE_URL = "sqlite+aiosqlite:///"
 DEFAULT_PUBLIC_ORIGIN = "http://testserver"
 DEFAULT_IDLE_SECONDS = 1800

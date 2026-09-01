@@ -141,14 +141,18 @@ def main() -> int:
         raise LiveE2EError(
             "Docker returned invalid repository digests for the E2E broker image"
         ) from exc
-    if (
-        len(repo_digests) != 1
-        or "@sha256:" not in repo_digests[0]
-    ):
+    broker_repository = broker_tag.rsplit(":", 1)[0]
+    matching_repo_digests = [
+        digest
+        for digest in repo_digests
+        if digest.startswith(f"{broker_repository}@sha256:")
+    ]
+    if len(matching_repo_digests) != 1:
         raise LiveE2EError(
-            "The locally built E2E broker image has no unique immutable digest"
+            "The locally built E2E broker image has no unique immutable digest "
+            "for its repository"
         )
-    broker_image = repo_digests[0]
+    broker_image = matching_repo_digests[0]
     inspected_socket = run_checked(
         [
             "docker",

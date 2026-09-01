@@ -7,6 +7,8 @@ from typing import cast
 import pytest
 
 from grafy_api.plugin_egress import (
+    PLUGIN_EGRESS_BROKER_CONFIG_VERSION,
+    PLUGIN_EGRESS_BROKER_CONFIG_VERSION_LABEL,
     PluginEgressAddressScope,
     PluginEgressBrokerPlan,
     PluginEgressDestination,
@@ -24,6 +26,18 @@ from grafy_api.plugin_egress_broker import (
 
 
 _BROKER_IMAGE = "registry.example/grafy-egress@sha256:" + "a" * 64
+
+
+def test_broker_image_declares_the_host_policy_contract() -> None:
+    repository = Path(__file__).resolve().parents[3]
+    dockerfile = (
+        repository / "infra/docker/plugin-egress-broker.Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        f"LABEL {PLUGIN_EGRESS_BROKER_CONFIG_VERSION_LABEL}="
+        f'"{PLUGIN_EGRESS_BROKER_CONFIG_VERSION}"'
+    ) in dockerfile
 
 
 def _write_policy(

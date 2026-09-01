@@ -1,8 +1,12 @@
 import asyncio
 import base64
 from ipaddress import ip_address
+import logging
+import os
 from pathlib import Path
 import socket
+import subprocess
+import sys
 from types import SimpleNamespace
 from typing import cast
 from uuid import UUID
@@ -28,6 +32,7 @@ from grafy_api.plugin_oci import runtime_profile
 from grafy_api.network_policy import NetworkCaBundle
 from grafy_api.v1.routes.executions.runtime.plugin_docker import (
     DockerPluginRuntime,
+    DockerPluginRuntimeError,
     PluginRuntimeReleaseLookup,
     _Sandbox,  # pyright: ignore[reportPrivateUsage]
     _SandboxKey,  # pyright: ignore[reportPrivateUsage]
@@ -109,6 +114,198 @@ def _public_answers(
     return [
         (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_readiness_rejects_incompatible_egress_broker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(
+        logging.ERROR,
+        logger="grafy_api.v1.routes.executions.runtime.plugin_docker",
+    )
+    runtime = _runtime(tmp_path)
+    commands: list[tuple[str, ...]] = []
+
+    async def docker(
+        arguments: tuple[str, ...],
+        **_kwargs: object,
+    ) -> DockerPluginRuntime._Completed:  # pyright: ignore[reportPrivateUsage]
+        commands.append(arguments)
+        stdout = b"28.3.3\n"
+        if arguments[0:2] == ("image", "inspect"):
+            stdout = b'{"io.grafy.plugin.egress-broker.policy-config-version":"1"}\n'
+        return DockerPluginRuntime._Completed(0, stdout, b"")  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(runtime, "_docker", docker)
+
+    with pytest.raises(
+        DockerPluginRuntimeError,
+        match=(
+            "Plugin egress broker image is incompatible: expected policy config "
+            "version 2, found 1"
+        ),
+    ):
+        await runtime.check_ready()
+
+    assert commands == [
+        ("version", "--format", "{{.Server.Version}}"),
+        (
+            "image",
+            "inspect",
+            "--format",
+            "{{json .Config.Labels}}",
+            _BROKER_IMAGE,
+        ),
+    ]
+    assert not any(command[0] in {"create", "network"} for command in commands)
+    failure_record = next(
+        record
+        for record in caplog.records
+        if record.message == "plugin_egress_broker_incompatible"
+    )
+    assert cast(str, failure_record.__dict__["broker_image"]) == _BROKER_IMAGE
+    assert cast(
+        int,
+        failure_record.__dict__["expected_contract_version"],
+    ) == 2
+    assert cast(
+        str,
+        failure_record.__dict__["actual_contract_version"],
+    ) == "1"
+    assert cast(str, failure_record.__dict__["reason"]) == "version_mismatch"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("inspect_returncode", "inspect_stdout", "error_match", "reason", "actual"),
+    [
+        (1, b"", "is not available to Docker", "image_unavailable", "unavailable"),
+        (
+            0,
+            b"not-json\n",
+            "invalid compatibility metadata",
+            "metadata_invalid",
+            "invalid",
+        ),
+    ],
+)
+async def test_runtime_readiness_logs_safe_broker_contract_failure_reason(
+    inspect_returncode: int,
+    inspect_stdout: bytes,
+    error_match: str,
+    reason: str,
+    actual: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(
+        logging.ERROR,
+        logger="grafy_api.v1.routes.executions.runtime.plugin_docker",
+    )
+    runtime = _runtime(tmp_path)
+
+    async def docker(
+        arguments: tuple[str, ...],
+        **_kwargs: object,
+    ) -> DockerPluginRuntime._Completed:  # pyright: ignore[reportPrivateUsage]
+        if arguments[0:2] == ("image", "inspect"):
+            return DockerPluginRuntime._Completed(  # pyright: ignore[reportPrivateUsage]
+                inspect_returncode,
+                inspect_stdout,
+                b"",
+            )
+        return DockerPluginRuntime._Completed(0, b"28.3.3\n", b"")  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(runtime, "_docker", docker)
+
+    with pytest.raises(DockerPluginRuntimeError, match=error_match):
+        await runtime.check_ready()
+
+    failure_record = next(
+        record
+        for record in caplog.records
+        if record.message == "plugin_egress_broker_incompatible"
+    )
+    assert cast(str, failure_record.__dict__["broker_image"]) == _BROKER_IMAGE
+    assert cast(str, failure_record.__dict__["reason"]) == reason
+    assert cast(
+        str,
+        failure_record.__dict__["actual_contract_version"],
+    ) == actual
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("labels", [b"null\n", b"{}\n"])
+async def test_runtime_readiness_rejects_unlabelled_egress_broker(
+    labels: bytes,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(tmp_path)
+
+    async def docker(
+        arguments: tuple[str, ...],
+        **_kwargs: object,
+    ) -> DockerPluginRuntime._Completed:  # pyright: ignore[reportPrivateUsage]
+        stdout = labels if arguments[0:2] == ("image", "inspect") else b"28.3.3\n"
+        return DockerPluginRuntime._Completed(0, stdout, b"")  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(runtime, "_docker", docker)
+
+    with pytest.raises(DockerPluginRuntimeError, match="found undeclared"):
+        await runtime.check_ready()
+
+
+@pytest.mark.asyncio
+async def test_runtime_readiness_accepts_matching_egress_broker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(tmp_path)
+
+    async def docker(
+        arguments: tuple[str, ...],
+        **_kwargs: object,
+    ) -> DockerPluginRuntime._Completed:  # pyright: ignore[reportPrivateUsage]
+        stdout = b"28.3.3\n"
+        if arguments[0:2] == ("image", "inspect"):
+            stdout = b'{"io.grafy.plugin.egress-broker.policy-config-version":"2"}\n'
+        return DockerPluginRuntime._Completed(0, stdout, b"")  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(runtime, "_docker", docker)
+
+    await runtime.check_ready()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="fork is POSIX-specific")
+@pytest.mark.asyncio
+async def test_runtime_readiness_never_falls_back_to_fork(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docker = tmp_path / "fake-docker"
+    docker.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    docker.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ.get('PATH', '')}")
+
+    def reject_fork(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("Docker command fell back to unsafe fork")
+
+    monkeypatch.setattr(subprocess, "_fork_exec", reject_fork)
+    runtime = DockerPluginRuntime(
+        releases=cast(PluginRuntimeReleaseLookup, object()),
+        storage=cast(FileStoragePort, object()),
+        bucket="test",
+        profile=runtime_profile("python-uv"),
+        scratch_root=tmp_path / "scratch",
+        docker_binary="fake-docker",
+    )
+
+    await runtime.check_ready()
 
 
 @pytest.mark.asyncio
@@ -212,6 +409,110 @@ async def test_egress_sandbox_uses_two_dedicated_networks_and_broker_only_outbou
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("diagnostic_probes_fail", [False, True])
+async def test_broker_readiness_failure_keeps_safe_deployment_diagnostics(
+    diagnostic_probes_fail: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(
+        logging.ERROR,
+        logger="grafy_api.v1.routes.executions.runtime.plugin_docker",
+    )
+    runtime = _runtime(tmp_path)
+    commands: list[tuple[str, ...]] = []
+
+    async def docker(
+        arguments: tuple[str, ...],
+        **_kwargs: object,
+    ) -> DockerPluginRuntime._Completed:  # pyright: ignore[reportPrivateUsage]
+        commands.append(arguments)
+        if arguments[0] == "create":
+            return DockerPluginRuntime._Completed(0, b"broker-id\n", b"")  # pyright: ignore[reportPrivateUsage]
+        if arguments[:2] == ("exec", "broker-id"):
+            return DockerPluginRuntime._Completed(137, b"", b"")  # pyright: ignore[reportPrivateUsage]
+        if arguments[:2] == ("inspect", "--format"):
+            if diagnostic_probes_fail:
+                raise TimeoutError("diagnostic state probe timed out")
+            return DockerPluginRuntime._Completed(  # pyright: ignore[reportPrivateUsage]
+                0,
+                b'{"Status":"exited","ExitCode":1,"OOMKilled":false}\n',
+                b"",
+            )
+        if arguments[:2] == ("logs", "--tail"):
+            if diagnostic_probes_fail:
+                raise TimeoutError("diagnostic log probe timed out")
+            return DockerPluginRuntime._Completed(  # pyright: ignore[reportPrivateUsage]
+                0,
+                b"",
+                b"Broker policy config version is unsupported\n",
+            )
+        return DockerPluginRuntime._Completed(0, b"", b"")  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(socket, "getaddrinfo", _public_answers)
+    monkeypatch.setattr(runtime, "_docker", docker)
+
+    error_match = (
+        "broker did not become ready"
+        if diagnostic_probes_fail
+        else "broker rejected policy config version 2"
+    )
+    with pytest.raises(DockerPluginRuntimeError, match=error_match):
+        await runtime._create_container(  # pyright: ignore[reportPrivateUsage]
+            _key(
+                PluginRuntimeCapability.NETWORK_EGRESS,
+                network_profile_digest="d" * 64,
+                http_destinations=(
+                    PluginEgressDestination.parse("https://api.example.com:443"),
+                ),
+            ),
+            _artifact(),
+            tmp_path,
+        )
+
+    assert ("rm", "-f", "broker-id") in commands
+    assert len(
+        [command for command in commands if command[:2] == ("network", "rm")]
+    ) == 2
+    failure_record = next(
+        record
+        for record in caplog.records
+        if record.message == "plugin_egress_broker_readiness_failed"
+    )
+    assert cast(str, failure_record.__dict__["broker_image"]) == _BROKER_IMAGE
+    assert cast(
+        int,
+        failure_record.__dict__["broker_contract_version"],
+    ) == 2
+    assert cast(int, failure_record.__dict__["ready_exit_code"]) == 137
+    expected_status = "unknown" if diagnostic_probes_fail else "exited"
+    expected_exit_code = None if diagnostic_probes_fail else 1
+    expected_oom_killed = None if diagnostic_probes_fail else False
+    assert cast(str, failure_record.__dict__["broker_status"]) == expected_status
+    assert (
+        cast(int | None, failure_record.__dict__["broker_exit_code"])
+        == expected_exit_code
+    )
+    assert (
+        cast(bool | None, failure_record.__dict__["broker_oom_killed"])
+        is expected_oom_killed
+    )
+    assert cast(
+        bool,
+        failure_record.__dict__["broker_state_probe_succeeded"],
+    ) is (not diagnostic_probes_fail)
+    assert cast(
+        bool,
+        failure_record.__dict__["broker_log_probe_succeeded"],
+    ) is (not diagnostic_probes_fail)
+    assert cast(
+        bool,
+        failure_record.__dict__["broker_rejected_policy_version"],
+    ) is (not diagnostic_probes_fail)
+
+
+@pytest.mark.asyncio
 async def test_untrusted_artifact_sql_keeps_network_none(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -278,9 +579,9 @@ async def test_cancelled_egress_creation_removes_broker_container_and_networks(
 
     assert ("rm", "-f", "sandbox-id") in commands
     assert ("rm", "-f", "broker-id") in commands
-    assert len(
-        [command for command in commands if command[:2] == ("network", "rm")]
-    ) == 2
+    assert (
+        len([command for command in commands if command[:2] == ("network", "rm")]) == 2
+    )
 
 
 def test_postgresql_keeps_original_transport_identity_and_artifact_query_has_no_env(

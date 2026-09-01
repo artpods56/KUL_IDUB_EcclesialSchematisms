@@ -182,7 +182,10 @@ def test_standard_library_logs_use_the_structured_pipeline(
 
     logging.getLogger("foreign.library").warning(
         "foreign event",
-        extra={"payload": {"password": "should-not-appear"}},
+        extra={
+            "payload": {"password": "should-not-appear"},
+            "broker_rejected_policy_version": True,
+        },
     )
 
     output = capsys.readouterr().err
@@ -191,5 +194,27 @@ def test_standard_library_logs_use_the_structured_pipeline(
     assert event["logger"] == "foreign.library"
     assert event["level"] == "warning"
     assert event["payload"] == "[REDACTED]"
+    assert event["broker_rejected_policy_version"] is True
     assert "should-not-appear" not in output
+    _remove_diagnostics_handler()
+
+
+def test_console_renderer_handles_sanitized_standard_library_exceptions(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _remove_diagnostics_handler()
+    configure_diagnostics(level="INFO", renderer="console")
+    sentinel = "CONSOLE-EXCEPTION-SECRET"
+
+    try:
+        raise RuntimeError(sentinel)
+    except RuntimeError:
+        logging.getLogger("foreign.library").exception("foreign failure")
+
+    output = capsys.readouterr().err
+    assert "foreign failure" in output
+    assert "builtins.RuntimeError" in output
+    assert "exception_diagnostic" in output
+    assert sentinel not in output
+    assert "Logging error" not in output
     _remove_diagnostics_handler()
