@@ -196,67 +196,6 @@ class ReleaseExecutionAdmission:
                 reason="unsupported_capabilities",
                 detail="Unsupported Plugin capabilities: undeclared node secrets.",
             )
-        host_candidate = False
-        if (
-            release.scope is PluginReleaseScope.SYSTEM
-            and release.execution_policy is PluginExecutionPolicy.HOST_ELIGIBLE
-            and selection is not None
-            and selection.scope is PluginReleaseScope.SYSTEM
-            and selection.workspace_id is None
-            and selection.slug == release.slug
-            and selection.lifecycle is PluginFamilyLifecycle.PUBLISHED
-            and selection.selected_release_id == release.id
-            and selection.selected_revision == release.revision
-        ):
-            host_candidate = True
-            binding = next(
-                (
-                    candidate
-                    for candidate in self.system_host_bindings
-                    if candidate.slug == release.slug
-                ),
-                None,
-            )
-            if binding is not None:
-                mismatch = binding.release_mismatch(release)
-                if mismatch is not None:
-                    return ReleaseExecutionRejection(
-                        reason="host_binding_mismatch",
-                        detail=(
-                            f"Selected System Plugin {release.slug!r} does not "
-                            f"match its deployment host binding ({mismatch})."
-                        ),
-                    )
-                if binding.selection_generation != selection.generation:
-                    return ReleaseExecutionRejection(
-                        reason="host_binding_mismatch",
-                        detail=(
-                            f"Selected System Plugin {release.slug!r} generation "
-                            f"{selection.generation} does not match deployment "
-                            f"generation {binding.selection_generation}."
-                        ),
-                    )
-                effective_host_capabilities = set(self.host_supported_capabilities)
-                if not self.host_network_egress.available:
-                    effective_host_capabilities.discard(
-                        PluginRuntimeCapability.NETWORK_EGRESS
-                    )
-                effective_host_capabilities.discard(
-                    PluginRuntimeCapability.POSTGRESQL_EGRESS
-                )
-                unsupported_host_capabilities = sorted(
-                    required_capabilities - effective_host_capabilities,
-                    key=lambda capability: capability.value,
-                )
-                if unsupported_host_capabilities:
-                    rendered = ", ".join(
-                        capability.value for capability in unsupported_host_capabilities
-                    )
-                    return ReleaseExecutionRejection(
-                        reason="unsupported_capabilities",
-                        detail=f"Unsupported host Plugin capabilities: {rendered}.",
-                    )
-                return ReleaseExecutionRoute.IN_PROCESS
 
         effective_isolated_capabilities = set(self.supported_capabilities)
         if not self.postgresql_egress.available:
@@ -288,12 +227,9 @@ class ReleaseExecutionAdmission:
             rendered = ", ".join(
                 capability.value for capability in unsupported_isolated_capabilities
             )
-            route_name = "isolated"
-            if host_candidate:
-                route_name = "fallback isolated"
             return ReleaseExecutionRejection(
                 reason="unsupported_capabilities",
-                detail=(f"Unsupported {route_name} Plugin capabilities: {rendered}."),
+                detail=f"Unsupported isolated Plugin capabilities: {rendered}.",
             )
 
         artifact_contracts = {

@@ -6,7 +6,6 @@ import pytest
 from grafy_core.domain.plugin_releases import (
     PluginCapabilityManifest,
     PluginCatalogManifest,
-    PluginDistribution,
     PluginExecutionPolicy,
     PluginNodeContract,
     PluginRelease,
@@ -78,11 +77,6 @@ def _release(
             ),
         ),
         execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
-        distribution=(
-            PluginDistribution.PUBLISHED
-            if scope is PluginReleaseScope.SYSTEM
-            else None
-        ),
         installed_by_user_id=(
             WORKSPACE_ID if scope is PluginReleaseScope.WORKSPACE else None
         ),

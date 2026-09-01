@@ -194,7 +194,6 @@ def _release() -> InstalledPluginRelease:
                 workspace_id=WORKSPACE_ID,
             ),
             execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
-            distribution=None,
             installed_by_user_id=WORKSPACE_ID,
             installed_by_platform_actor=None,
         ),
@@ -225,6 +224,7 @@ def _compiler(
         plugin_release_lookup=_ReleaseLookup(release),
         plugin_invoker=_UnusedPluginInvoker(),
         release_admission=admission,
+        build_digest="a" * 64,
     )
 
 
@@ -237,6 +237,7 @@ def _run_request(operator_id: str) -> RunRequest:
     return RunRequest(
         nodes=[
             RunNodeRequest(
+                kind="plugin",
                 id="node",
                 operator_id=operator_id,
                 operator_version=1,

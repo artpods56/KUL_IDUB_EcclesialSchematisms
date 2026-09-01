@@ -10,8 +10,8 @@ from grafy_core.runtime.plugin_loader import (
 
 def test_loader_manifest_is_canonical_and_content_addressed() -> None:
     manifest = PluginGuestLoaderManifest(
-        slug="builtin.text",
-        loader_target="grafy_plugin_text.plugin:TEXT",
+        slug="notes",
+        loader_target="grafy_plugin_notes.plugin:NOTES",
     )
 
     payload = manifest.canonical_json_bytes()
@@ -33,15 +33,15 @@ def test_loader_manifest_is_scope_neutral_and_accepts_project_owned_targets() ->
 @pytest.mark.parametrize(
     "loader_target",
     (
-        "grafy_plugin_text",
-        "grafy_plugin_text.plugin.TEXT",
-        "grafy_plugin_text.plugin:TEXT.extra",
-        "../grafy_plugin_text:TEXT",
+        "grafy_plugin_notes",
+        "grafy_plugin_notes.plugin.NOTES",
+        "grafy_plugin_notes.plugin:NOTES.extra",
+        "../grafy_plugin_notes:NOTES",
     ),
 )
 def test_loader_manifest_rejects_non_import_targets(loader_target: str) -> None:
     with pytest.raises(ValidationError):
         PluginGuestLoaderManifest(
-            slug="builtin.text",
+            slug="notes",
             loader_target=loader_target,
         )

@@ -1,10 +1,9 @@
-from grafy_plugin_arithmetic import ARITHMETIC
-from grafy_plugin_image import IMAGES
+from grafy_workbench.arithmetic import ARITHMETIC
+from grafy_workbench.image import IMAGES
 from grafy_core.operators.modules import MODULE_BOUNDARY_REGISTRATIONS
-from grafy_plugin_prompt import PROMPTS
-from grafy_plugin_schema import SCHEMAS
-from grafy_plugin_sequence import SEQUENCES
-from grafy_plugin_text import TEXT
+from grafy_workbench.schema import SCHEMAS
+from grafy_workbench.sequence import SEQUENCES
+from grafy_workbench.text import TEXT
 from grafy_core.plugins import NodeCachePolicy
 
 
@@ -18,7 +17,6 @@ def test_builtin_node_cache_policy_inventory_is_fail_closed() -> None:
             *ARITHMETIC.nodes,
             *TEXT.nodes,
             *SCHEMAS.nodes,
-            *PROMPTS.nodes,
         )
     }
 
@@ -42,5 +40,4 @@ def test_builtin_node_cache_policy_inventory_is_fail_closed() -> None:
         ("text.replace", 1): NodeCachePolicy.EXACT,
         ("text.join", 1): NodeCachePolicy.EXACT,
         ("schema.builder", 1): NodeCachePolicy.EXACT,
-        ("prompt.message.create", 2): NodeCachePolicy.EXACT,
     }

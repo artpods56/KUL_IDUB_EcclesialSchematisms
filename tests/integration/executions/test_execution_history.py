@@ -96,6 +96,7 @@ def _start_saved_text_execution(
         RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="text",
                     operator_id="text.input",
                     operator_version=1,
@@ -404,6 +405,7 @@ def test_duplicate_saved_node_ids_become_a_browsable_failed_execution(
     assert created_response.status_code == 201
     graph = SavedGraphResponse.model_validate(created_response.json())
     duplicate_node = RunNodeRequest(
+        kind="builtin",
         id="text",
         operator_id="text.input",
         operator_version=1,
@@ -541,6 +543,7 @@ def test_conflicting_start_reports_existing_execution_without_leaking(
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="builtin",
                         id="text",
                         operator_id="text.input",
                         operator_version=1,

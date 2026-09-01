@@ -13,7 +13,6 @@ from grafy_core.domain.plugin_installations import (
 from grafy_core.domain.plugin_releases import (
     PluginCapabilityManifest,
     PluginCatalogManifest,
-    PluginDistribution,
     PluginExecutionPolicy,
     PluginNodeContract,
     PluginRelease,
@@ -101,7 +100,6 @@ def _installed(
             if system
             else PluginExecutionPolicy.ISOLATED_ONLY
         ),
-        distribution=PluginDistribution.BUNDLED if system else None,
         installed_by_user_id=None if system else USER_ID,
         installed_by_platform_actor="test:system" if system else None,
     )

@@ -169,6 +169,7 @@ def _fragment_case() -> tuple[SavedGraphRevision, RunRequest]:
         document=SavedGraphDocument(
             nodes=(
                 SavedGraphNode(
+                    kind="builtin",
                     id="source",
                     operator_id="test.graph-preflight.plain",
                     operator_version=1,
@@ -176,6 +177,7 @@ def _fragment_case() -> tuple[SavedGraphRevision, RunRequest]:
                     position=GraphPoint(x=0, y=0),
                 ),
                 SavedGraphNode(
+                    kind="builtin",
                     id="target",
                     operator_id="test.graph-preflight.plain",
                     operator_version=1,
@@ -190,6 +192,7 @@ def _fragment_case() -> tuple[SavedGraphRevision, RunRequest]:
                     ),
                 ),
                 SavedGraphNode(
+                    kind="builtin",
                     id="downstream",
                     operator_id="test.graph-preflight.plain",
                     operator_version=1,
@@ -214,6 +217,7 @@ def _fragment_case() -> tuple[SavedGraphRevision, RunRequest]:
         graph_revision=graph.revision,
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="target",
                 operator_id="test.graph-preflight.plain",
                 operator_version=1,
@@ -255,6 +259,7 @@ def _secret_revision() -> SavedGraphRevision:
         document=SavedGraphDocument(
             nodes=(
                 SavedGraphNode(
+                    kind="builtin",
                     id="secret",
                     operator_id="test.graph-preflight.secret",
                     operator_version=1,
@@ -276,6 +281,7 @@ def _module_input_fragment(*, required: bool) -> tuple[SavedGraphRevision, RunRe
         document=SavedGraphDocument(
             nodes=(
                 SavedGraphNode(
+                    kind="builtin",
                     id="module-input",
                     operator_id="module.input",
                     operator_version=1,
@@ -283,6 +289,7 @@ def _module_input_fragment(*, required: bool) -> tuple[SavedGraphRevision, RunRe
                     position=GraphPoint(x=0, y=0),
                 ),
                 SavedGraphNode(
+                    kind="builtin",
                     id="target",
                     operator_id="test.graph-preflight.plain",
                     operator_version=1,
@@ -306,6 +313,7 @@ def _module_input_fragment(*, required: bool) -> tuple[SavedGraphRevision, RunRe
         graph_revision=graph.revision,
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="target",
                 operator_id="test.graph-preflight.plain",
                 operator_version=1,
@@ -434,6 +442,7 @@ async def test_dirty_secret_context_checks_only_saved_secret_dependencies() -> N
         secret_graph_revision=graph.revision,
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="secret",
                 operator_id="test.graph-preflight.secret",
                 operator_version=1,
@@ -443,6 +452,7 @@ async def test_dirty_secret_context_checks_only_saved_secret_dependencies() -> N
                 },
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="unsaved-plain",
                 operator_id="test.graph-preflight.plain",
                 operator_version=1,
@@ -476,6 +486,7 @@ async def test_secret_context_rejects_changed_dependency_binding() -> None:
                 secret_graph_revision=graph.revision,
                 nodes=[
                     RunNodeRequest(
+                        kind="builtin",
                         id="secret",
                         operator_id="test.graph-preflight.secret",
                         operator_version=1,
@@ -511,6 +522,7 @@ async def test_secret_nodes_require_explicit_secret_context_before_graph_lookup(
                 graph_revision=graph.revision,
                 nodes=[
                     RunNodeRequest(
+                        kind="builtin",
                         id=node_id,
                         operator_id="test.graph-preflight.secret",
                         operator_version=1,
@@ -651,6 +663,7 @@ async def test_isolated_secret_detection_uses_one_exact_serialized_release_read(
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="plugin",
                         id=node_id,
                         operator_id="test.graph-preflight.secret",
                         operator_version=1,
@@ -710,6 +723,7 @@ async def test_isolated_secret_bindings_use_the_serialized_release_contract() ->
         secret_graph_revision=pinned_graph.revision,
         nodes=[
             RunNodeRequest(
+                kind="plugin",
                 id="secret",
                 operator_id="test.graph-preflight.secret",
                 operator_version=1,
@@ -764,6 +778,7 @@ async def test_pinned_module_operators_fail_before_exact_release_lookup(
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="plugin",
                         id="module",
                         operator_id=operator_id,
                         operator_version=1,
@@ -877,6 +892,7 @@ async def test_preflight_denies_network_node_under_the_default_offline_profile()
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="plugin",
                         id="egress",
                         operator_id="test.graph-preflight.egress.configured",
                         operator_version=1,
@@ -902,6 +918,7 @@ async def test_preflight_allows_configured_egress_under_assigned_profile() -> No
         RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="plugin",
                     id="egress",
                     operator_id="test.graph-preflight.egress.configured",
                     operator_version=1,
@@ -937,6 +954,7 @@ async def test_preflight_denies_configured_egress_outside_curated_allowlist() ->
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="plugin",
                         id="egress",
                         operator_id="test.graph-preflight.egress.configured",
                         operator_version=1,
@@ -966,6 +984,7 @@ async def test_preflight_denies_dynamic_destinations_in_first_release() -> None:
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="plugin",
                         id="dynamic",
                         operator_id="test.graph-preflight.egress.dynamic",
                         operator_version=1,
@@ -991,6 +1010,7 @@ async def test_preflight_denies_configured_node_without_url_value() -> None:
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="plugin",
                         id="egress",
                         operator_id="test.graph-preflight.egress.configured",
                         operator_version=1,

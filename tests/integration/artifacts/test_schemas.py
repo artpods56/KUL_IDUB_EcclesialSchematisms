@@ -24,6 +24,7 @@ def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
         RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="supplier-schema",
                     operator_id="schema.builder",
                     operator_version=1,
@@ -41,6 +42,7 @@ def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
                     },
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="line-schema",
                     operator_id="schema.builder",
                     operator_version=1,
@@ -65,6 +67,7 @@ def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
                     },
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="invoice-schema",
                     operator_id="schema.builder",
                     operator_version=1,
@@ -176,6 +179,7 @@ def test_schema_builder_requires_one_connection_for_each_nested_field_plug(
         RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="parent",
                     operator_id="schema.builder",
                     operator_version=1,

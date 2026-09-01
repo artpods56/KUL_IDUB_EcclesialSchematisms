@@ -158,6 +158,7 @@ function sourceSpec(shape: "one" | "many"): NodeSpec {
     operator_id: "test.render-source",
     operator_version: 1,
     plugin_slug: "test",
+    origin: "builtin",
     title: "Prepare map",
     description: "Produces multiple outputs for viewer tests.",
     catalog_visible: true,

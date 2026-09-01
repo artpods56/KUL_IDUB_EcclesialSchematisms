@@ -13,6 +13,7 @@ function secretNodeSpec(): NodeSpec {
     operator_id: "llm.openai.completion",
     operator_version: 1,
     plugin_slug: "external.llm",
+    origin: "builtin",
     title: "OpenAI-compatible completion",
     description: "Completes a prompt through an OpenAI-compatible API.",
     catalog_visible: true,
@@ -82,6 +83,7 @@ describe("write-only node secret metadata", () => {
     const input = nodeSecretInputs(secretNodeSpec())[0]!;
     const savedNode = {
       id: "llm-1",
+      kind: "builtin",
       operator_id: "llm.openai.completion",
       operator_version: 1,
       config: {
@@ -104,6 +106,7 @@ describe("write-only node secret metadata", () => {
     const input = nodeSecretInputs(secretNodeSpec())[0]!;
     const savedNode = {
       id: "llm-1",
+      kind: "builtin",
       operator_id: "llm.openai.completion",
       operator_version: 1,
       config: { base_url: "https://api.openai.com/v1" },
@@ -144,6 +147,7 @@ describe("write-only node secret metadata", () => {
     const [apiKey, organizationKey] = nodeSecretInputs(spec);
     const savedNode = {
       id: "llm-1",
+      kind: "builtin",
       operator_id: spec.operator_id,
       operator_version: spec.operator_version,
       config: {
@@ -165,6 +169,7 @@ describe("write-only node secret metadata", () => {
     const input = nodeSecretInputs(secretNodeSpec())[0]!;
     const savedNode = {
       id: "llm-1",
+      kind: "builtin",
       operator_id: "llm.openai.completion",
       operator_version: 1,
       config: { base_url: "https://api.openai.com/v1" },

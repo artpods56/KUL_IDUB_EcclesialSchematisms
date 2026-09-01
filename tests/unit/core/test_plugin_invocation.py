@@ -133,7 +133,6 @@ def _release_from_serialized_contract(
                 workspace_id=workspace_id,
             ),
             execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
-            distribution=None,
             installed_by_user_id=workspace_id,
             installed_by_platform_actor=None,
         ),

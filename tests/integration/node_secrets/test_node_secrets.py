@@ -152,8 +152,6 @@ def _build_secret_components(
         saved_graphs=saved_graphs,
         node_secrets=node_secrets,
         plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
-        system_host_bindings=deployment.host_bindings,
-        loaded_system_plugins=deployment.loaded_plugins,
     )
 
 
@@ -200,6 +198,7 @@ def _secret_document(
     return SavedGraphDocument(
         nodes=(
             SavedGraphNode(
+                kind="builtin",
                 id="llm",
                 operator_id="test.secret-node",
                 operator_version=1,
@@ -858,6 +857,7 @@ async def test_saved_run_passes_validated_graph_context_to_node(
             secret_graph_revision=graph.revision,
             nodes=[
                 RunNodeRequest(
+                    kind="plugin",
                     id="llm",
                     operator_id="test.secret-node",
                     operator_version=1,
@@ -908,6 +908,7 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
             secret_graph_revision=graph.revision,
             nodes=[
                 RunNodeRequest(
+                    kind="plugin",
                     id="llm",
                     operator_id="test.secret-node",
                     operator_version=1,
@@ -919,6 +920,7 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
                     },
                 ),
                 RunNodeRequest(
+                    kind="plugin",
                     id="unsaved-plain",
                     operator_id="test.plain-node",
                     operator_version=1,
@@ -976,6 +978,7 @@ async def test_secret_bearing_run_requires_explicit_secret_graph_context(
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="plugin",
                         id="llm",
                         operator_id="test.secret-node",
                         operator_version=1,
@@ -1015,6 +1018,7 @@ async def test_dirty_run_rejects_invalid_saved_secret_binding(
             document=SavedGraphDocument(
                 nodes=(
                     SavedGraphNode(
+                        kind="builtin",
                         id="llm",
                         operator_id="test.plain-node",
                         operator_version=1,
@@ -1047,6 +1051,7 @@ async def test_dirty_run_rejects_invalid_saved_secret_binding(
                 secret_graph_revision=graph.revision,
                 nodes=[
                     RunNodeRequest(
+                        kind="plugin",
                         id=submitted_node_id,
                         operator_id="test.secret-node",
                         operator_version=1,

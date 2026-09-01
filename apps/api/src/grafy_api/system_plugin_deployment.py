@@ -407,11 +407,6 @@ class SystemPluginDeploymentManifestBuilder:
                     f"Staged System release {entry.slug!r} execution policy does "
                     "not match the checked-in inventory"
                 )
-            if release.distribution is not entry.distribution:
-                raise SystemPluginInventoryError(
-                    f"Staged System release {entry.slug!r} distribution does not "
-                    "match the checked-in inventory"
-                )
             if release.capabilities.capabilities != entry.capabilities:
                 raise SystemPluginInventoryError(
                     f"Staged System release {entry.slug!r} capabilities do not "

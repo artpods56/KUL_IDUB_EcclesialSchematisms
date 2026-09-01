@@ -31,7 +31,7 @@ from grafy_core.artifacts import (
     InMemoryUnitOfWork,
 )
 from grafy_core.conversions import MAX_ARTIFACT_CONVERSION_HOPS
-from grafy_plugin_arithmetic.nodes import (
+from grafy_workbench.arithmetic.nodes import (
     BinaryIntegerInput,
     IntegerSequenceConfig,
     IntegerSequenceOutput,
@@ -60,18 +60,21 @@ def _compound_run_request(
     return RunRequest(
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="nine",
                 operator_id="arithmetic.number",
                 operator_version=1,
                 config={"value": number_values[0]},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="four",
                 operator_id="arithmetic.number",
                 operator_version=1,
                 config={"value": number_values[1]},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="compound",
                 operator_id="test.compound_producer",
                 operator_version=1,
@@ -79,6 +82,7 @@ def _compound_run_request(
                 config={},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="multiply",
                 operator_id="arithmetic.multiply",
                 operator_version=1,
@@ -131,24 +135,28 @@ def _mapped_sum_run_request(
     return RunRequest(
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="sequence",
                 operator_id="arithmetic.integer_sequence",
                 operator_version=1,
                 config={"start": 1, "count": 3, "step": 1},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="ten",
                 operator_id="arithmetic.number",
                 operator_version=1,
                 config={"value": 10},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="multiply",
                 operator_id="arithmetic.multiply",
                 operator_version=1,
                 config={},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="sum",
                 operator_id="arithmetic.sum",
                 operator_version=1,
@@ -245,10 +253,10 @@ def test_registry_declares_scalar_arithmetic_nodes_and_test_compound_projections
             "arithmetic.multiply",
         )
     ] == [
-        ("Number", "builtin.arithmetic"),
-        ("Add integers", "builtin.arithmetic"),
-        ("Subtract integers", "builtin.arithmetic"),
-        ("Multiply", "builtin.arithmetic"),
+        ("Number", "arithmetic"),
+        ("Add integers", "arithmetic"),
+        ("Subtract integers", "arithmetic"),
+        ("Multiply", "arithmetic"),
     ]
 
 
@@ -262,12 +270,14 @@ def test_integer_output_converts_to_text_before_text_node_execution(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="number",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": 9},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="replace",
                     operator_id="text.replace",
                     operator_version=1,
@@ -325,18 +335,21 @@ def test_projection_runs_before_declared_integer_to_text_conversion(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="nine",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": 9},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="four",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": 4},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="compound",
                     operator_id="test.compound_producer",
                     operator_version=1,
@@ -344,6 +357,7 @@ def test_projection_runs_before_declared_integer_to_text_conversion(
                     config={},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="replace",
                     operator_id="text.replace",
                     operator_version=1,
@@ -398,18 +412,21 @@ def test_integer_sequence_conversion_preserves_order_through_mapped_text_node(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="sequence",
                     operator_id="arithmetic.integer_sequence",
                     operator_version=1,
                     config={"start": 1, "count": 3, "step": 1},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="replace",
                     operator_id="text.replace",
                     operator_version=1,
                     config={"search": "2", "replacement": "two"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="join",
                     operator_id="text.join",
                     operator_version=1,
@@ -465,12 +482,14 @@ def test_transitive_conversion_path_composes_in_memory_and_writes_final_only(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="number",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": 9},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="consumer",
                     operator_id="test.compound_result_consumer",
                     operator_version=1,
@@ -522,18 +541,21 @@ def test_projection_runs_before_every_step_in_a_transitive_conversion_path(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="nine",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": 9},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="four",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": 4},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="compound",
                     operator_id="test.compound_producer",
                     operator_version=1,
@@ -541,6 +563,7 @@ def test_projection_runs_before_every_step_in_a_transitive_conversion_path(
                     config={},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="consumer",
                     operator_id="test.compound_result_consumer",
                     operator_version=1,
@@ -606,12 +629,14 @@ def test_sequence_items_each_traverse_the_full_conversion_path_before_mapping(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="sequence",
                     operator_id="arithmetic.integer_sequence",
                     operator_version=1,
                     config={"start": 1, "count": 3, "step": 1},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="consumer",
                     operator_id="test.compound_result_consumer",
                     operator_version=1,
@@ -692,12 +717,14 @@ def test_invalid_conversion_paths_are_rejected_before_node_execution(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="invalid-number",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": "would-fail-if-executed"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="consumer",
                     operator_id="test.compound_result_consumer",
                     operator_version=1,
@@ -741,12 +768,14 @@ def test_conversion_path_errors_identify_the_exact_failing_step(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="number",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": 9},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="consumer",
                     operator_id="test.compound_result_consumer",
                     operator_version=1,
@@ -794,12 +823,14 @@ def test_conversion_path_errors_identify_the_exact_failing_step(
             (
                 [
                     {
+                        "kind": "builtin",
                         "id": "source",
                         "operator_id": "arithmetic.number",
                         "operator_version": 1,
                         "config": {"value": "not-an-integer"},
                     },
                     {
+                        "kind": "builtin",
                         "id": "target",
                         "operator_id": "text.replace",
                         "operator_version": 1,
@@ -821,12 +852,14 @@ def test_conversion_path_errors_identify_the_exact_failing_step(
             (
                 [
                     {
+                        "kind": "builtin",
                         "id": "source",
                         "operator_id": "text.input",
                         "operator_version": 1,
                         "config": {"text": 123},
                     },
                     {
+                        "kind": "builtin",
                         "id": "target",
                         "operator_id": "text.replace",
                         "operator_version": 1,
@@ -848,12 +881,14 @@ def test_conversion_path_errors_identify_the_exact_failing_step(
             (
                 [
                     {
+                        "kind": "builtin",
                         "id": "source",
                         "operator_id": "arithmetic.integer_sequence",
                         "operator_version": 1,
                         "config": {"start": "not-an-integer", "count": 3},
                     },
                     {
+                        "kind": "builtin",
                         "id": "target",
                         "operator_id": "arithmetic.sum",
                         "operator_version": 1,
@@ -903,30 +938,35 @@ def test_add_and_subtract_nodes_feed_scalar_results_into_multiply(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="nine",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": 9},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="four",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": 4},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="add",
                     operator_id="arithmetic.add",
                     operator_version=1,
                     config={},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="subtract",
                     operator_id="arithmetic.subtract",
                     operator_version=1,
                     config={},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="multiply",
                     operator_id="arithmetic.multiply",
                     operator_version=1,
@@ -1044,6 +1084,7 @@ def test_selected_target_projects_two_edges_from_one_pinned_compound_output(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="multiply",
                     operator_id="arithmetic.multiply",
                     operator_version=1,
@@ -1122,12 +1163,14 @@ def test_selected_mapped_run_uses_exact_pinned_sequence_envelope_in_order(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="sequence",
                     operator_id="arithmetic.integer_sequence",
                     operator_version=1,
                     config={"start": 1, "count": 3, "step": 1},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="ten",
                     operator_id="arithmetic.number",
                     operator_version=1,
@@ -1152,6 +1195,7 @@ def test_selected_mapped_run_uses_exact_pinned_sequence_envelope_in_order(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="multiply",
                     operator_id="arithmetic.multiply",
                     operator_version=1,
@@ -1214,6 +1258,7 @@ def test_selected_run_uses_submitted_older_or_newer_pin_without_latest_lookup(
             json=RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="builtin",
                         id="source",
                         operator_id="arithmetic.number",
                         operator_version=1,
@@ -1237,6 +1282,7 @@ def test_selected_run_uses_submitted_older_or_newer_pin_without_latest_lookup(
             json=RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="builtin",
                         id="multiply",
                         operator_id="arithmetic.multiply",
                         operator_version=1,
@@ -1378,6 +1424,7 @@ def test_invalid_selected_run_pins_are_rejected_before_target_execution(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="multiply",
                     operator_id="arithmetic.multiply",
                     operator_version=1,
@@ -1403,6 +1450,7 @@ def test_pin_for_executing_source_is_rejected_before_source_config_runs(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="source",
                     operator_id="arithmetic.number",
                     operator_version=1,
@@ -1422,12 +1470,14 @@ def test_pin_for_executing_source_is_rejected_before_source_config_runs(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="source",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": "invalid"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="multiply",
                     operator_id="arithmetic.multiply",
                     operator_version=1,
@@ -1511,12 +1561,14 @@ def test_invalid_map_edge_target_is_rejected_before_execution(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="sequence",
                     operator_id="arithmetic.integer_sequence",
                     operator_version=1,
                     config={"start": 1, "count": 3, "step": 1},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="multiply",
                     operator_id="arithmetic.multiply",
                     operator_version=1,
@@ -1548,18 +1600,21 @@ def test_node_rejects_more_than_one_map_edge(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="left-sequence",
                     operator_id="arithmetic.integer_sequence",
                     operator_version=1,
                     config={"start": 1, "count": 2, "step": 1},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="right-sequence",
                     operator_id="arithmetic.integer_sequence",
                     operator_version=1,
                     config={"start": 3, "count": 2, "step": 1},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="multiply",
                     operator_id="arithmetic.multiply",
                     operator_version=1,
@@ -1598,6 +1653,7 @@ def test_unknown_operator_version_is_rejected_before_execution(
         json=RunRequest(
             nodes=[
                 UnpinnedRunNodeRequest(
+                    kind="builtin",
                     id="number",
                     operator_id="arithmetic.number",
                     operator_version=99,
@@ -1609,10 +1665,7 @@ def test_unknown_operator_version_is_rejected_before_execution(
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == (
-        "Node 'number' (arithmetic.number@99) is executable Plugin code and must "
-        "pin one exact Plugin release with scope, slug, and revision"
-    )
+    assert response.json()["detail"] == "Unknown builtin operator arithmetic.number@99"
 
 
 @pytest.mark.parametrize(
@@ -1649,12 +1702,14 @@ def test_missing_required_arithmetic_input_is_422_before_node_execution(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="invalid-number",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": "not-an-integer"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="add",
                     operator_id="arithmetic.add",
                     operator_version=1,
@@ -1688,6 +1743,7 @@ def test_number_node_config_does_not_coerce_non_integer_values(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="number",
                     operator_id="arithmetic.number",
                     operator_version=1,

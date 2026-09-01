@@ -11,7 +11,7 @@ from grafy_core.artifacts import (
     InMemoryUnitOfWork,
 )
 from grafy_core.artifact_contracts import RASTER_IMAGE
-from grafy_plugin_sequence.nodes import ItemAtConfig, SliceConfig
+from grafy_workbench.sequence.nodes import ItemAtConfig, SliceConfig
 
 from grafy_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
 from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
@@ -70,7 +70,7 @@ def test_registry_declares_sequence_node_contracts(
     registry = NodeRegistryResponse.model_validate(response.json())
     nodes = {node.operator_id: node for node in registry.nodes}
     collect = nodes["sequence.collect"]
-    assert collect.plugin_slug == "builtin.sequence"
+    assert collect.plugin_slug == "sequence"
     assert collect.title == "Collect"
     assert collect.inputs[0].artifact_type is None
     assert collect.inputs[0].artifact_type_variable == "T"
@@ -117,12 +117,14 @@ def test_count_slice_and_item_at_preserve_refs_and_artifact_content(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="numbers",
                     operator_id="arithmetic.integer_sequence",
                     operator_version=1,
                     config={"start": 10, "count": 4, "step": 10},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="count",
                     operator_id="sequence.count",
                     operator_version=1,
@@ -130,6 +132,7 @@ def test_count_slice_and_item_at_preserve_refs_and_artifact_content(
                     artifact_type_bindings=_binding("scalar.integer"),
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="slice",
                     operator_id="sequence.slice",
                     operator_version=1,
@@ -137,6 +140,7 @@ def test_count_slice_and_item_at_preserve_refs_and_artifact_content(
                     artifact_type_bindings=_binding("scalar.integer"),
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="pick",
                     operator_id="sequence.item_at",
                     operator_version=1,
@@ -219,6 +223,7 @@ def test_collect_flattens_image_scalar_and_sequence_in_plug_order(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="collect",
                     operator_id="sequence.collect",
                     operator_version=1,
@@ -300,18 +305,21 @@ def test_collect_converts_each_input_to_its_bound_text_type(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="number",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": 42},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="text",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "answer"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="collect",
                     operator_id="sequence.collect",
                     operator_version=1,
@@ -400,6 +408,7 @@ def test_collect_rejects_invalid_type_bindings(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="collect",
                     operator_id="sequence.collect",
                     operator_version=1,
@@ -423,6 +432,7 @@ def test_run_rejects_removed_local_upload_operator(
         json=RunRequest(
             nodes=[
                 UnpinnedRunNodeRequest(
+                    kind="builtin",
                     id="legacy-upload",
                     operator_id="source.local_upload.images",
                     operator_version=1,
@@ -434,8 +444,7 @@ def test_run_rejects_removed_local_upload_operator(
 
     assert response.status_code == 422
     assert response.json()["detail"] == (
-        "Node 'legacy-upload' (source.local_upload.images@1) is executable Plugin "
-        "code and must pin one exact Plugin release with scope, slug, and revision"
+        "Unknown builtin operator source.local_upload.images@1"
     )
 
 
@@ -447,6 +456,7 @@ def test_collect_rejects_removed_page_image_artifact_type(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="collect",
                     operator_id="sequence.collect",
                     operator_version=1,
@@ -505,12 +515,14 @@ def test_collect_rejects_an_input_with_a_different_artifact_type(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="number",
                     operator_id="arithmetic.number",
                     operator_version=1,
                     config={"value": 7},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="collect",
                     operator_id="sequence.collect",
                     operator_version=1,

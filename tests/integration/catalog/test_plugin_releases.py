@@ -193,7 +193,6 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
         "title": "Notes",
         "entry_kind": "plugin",
         "scope": "workspace",
-        "distribution": None,
         "plugin_release": {
             "scope": "workspace",
             "slug": "notes",

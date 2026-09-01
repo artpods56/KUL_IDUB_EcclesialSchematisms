@@ -31,13 +31,16 @@ WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 def _node(
     node_id: str,
     *,
+    kind: str = "builtin",
+    operator_id: str = "example.operator",
     input_plugs: tuple[SavedGraphInputPlug, ...] = (),
     artifact_type_bindings: tuple[SavedGraphArtifactTypeBinding, ...] = (),
     plugin_release_pin: SavedGraphPluginReleasePin | None = None,
 ) -> SavedGraphNode:
     return SavedGraphNode(
+        kind=kind,  # type: ignore[arg-type]
         id=node_id,
-        operator_id="example.operator",
+        operator_id=operator_id,
         operator_version=1,
         config={},
         position=GraphPoint(x=10.0, y=20.0),
@@ -67,6 +70,7 @@ def test_saved_graph_document_allows_drafts_without_executable_connections() -> 
     incomplete_draft = SavedGraphDocument(
         nodes=(
             SavedGraphNode(
+                kind="builtin",
                 id="unconnected",
                 operator_id="plugin.that-is-not-installed",
                 operator_version=99,
@@ -82,28 +86,15 @@ def test_saved_graph_document_allows_drafts_without_executable_connections() -> 
     assert incomplete_draft.edges == ()
 
 
-def test_saved_graph_document_migrates_v1_singular_conversion_in_memory() -> None:
-    edge_payload = _edge("converted").model_dump(mode="json")
-    edge_payload.pop("conversion_path")
-    edge_payload["conversion"] = {"id": "example.convert", "version": 3}
-    document = SavedGraphDocument.model_validate(
-        {
-            "schema_version": 1,
-            "nodes": [
-                _node("source").model_dump(mode="json"),
-                _node("target").model_dump(mode="json"),
-            ],
-            "edges": [edge_payload],
-        }
-    )
-
-    assert document.schema_version == 5
-    assert document.edges[0].conversion_path == (
-        SavedGraphConversion(id="example.convert", version=3),
-    )
-    assert document.nodes[1].input_plugs == ()
-    assert document.edges[0].to_plug is None
-    assert "conversion" not in document.model_dump(mode="json")["edges"][0]
+def test_saved_graph_document_rejects_legacy_schema_versions() -> None:
+    with pytest.raises(ValidationError, match="is not supported"):
+        SavedGraphDocument.model_validate(
+            {
+                "schema_version": 5,
+                "nodes": [_node("source").model_dump(mode="json")],
+                "edges": [],
+            }
+        )
 
 
 def test_saved_graph_edge_defaults_enabled_for_legacy_payloads() -> None:
@@ -116,29 +107,22 @@ def test_saved_graph_edge_defaults_enabled_for_legacy_payloads() -> None:
     assert edge.model_dump(mode="json")["enabled"] is True
 
 
-def test_saved_graph_document_migrates_v2_bindings_to_v3() -> None:
-    document = SavedGraphDocument.model_validate(
-        {
-            "schema_version": 2,
-            "nodes": [
-                {
-                    **_node("collect").model_dump(mode="json"),
-                    "artifact_type_bindings": [
-                        {
-                            "variable": "T",
-                            "artifact_type": {
-                                "id": "example.value",
-                                "schema_version": 2,
-                            },
-                        }
-                    ],
-                }
-            ],
-            "edges": [],
-        }
+def test_saved_graph_document_requires_current_schema_version() -> None:
+    document = SavedGraphDocument(
+        nodes=(
+            _node(
+                "collect",
+                artifact_type_bindings=(
+                    SavedGraphArtifactTypeBinding(
+                        variable="T",
+                        artifact_type=ArtifactTypeKey("example.value", 2),
+                    ),
+                ),
+            ),
+        )
     )
 
-    assert document.schema_version == 5
+    assert document.schema_version == 6
     assert document.nodes[0].artifact_type_binding_map() == {
         "T": ArtifactTypeKey("example.value", 2)
     }
@@ -149,6 +133,7 @@ def test_saved_graph_node_layout_round_trips_and_rejects_empty_or_out_of_range()
 ):
     layout = SavedGraphNodeLayout(width=420, body_height=180, appendix_height=320)
     node = SavedGraphNode(
+        kind="builtin",
         id="resized",
         operator_id="example.operator",
         operator_version=1,
@@ -232,6 +217,7 @@ def test_presentation_annotations_round_trip_and_reject_shape_text() -> None:
 
 def test_saved_graph_node_config_is_deeply_immutable_and_serializable() -> None:
     node = SavedGraphNode(
+        kind="builtin",
         id="configured",
         operator_id="example.operator",
         operator_version=1,
@@ -552,7 +538,7 @@ def test_saved_graph_node_serializes_the_plugin_release_pin() -> None:
         slug="notes",
         revision=4,
     )
-    node = _node("echo", plugin_release_pin=pin)
+    node = _node("echo", kind="plugin", plugin_release_pin=pin)
 
     payload = node.model_dump(mode="json")
 

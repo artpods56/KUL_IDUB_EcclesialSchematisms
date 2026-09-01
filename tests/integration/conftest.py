@@ -13,7 +13,7 @@ from grafy_core.artifacts import InMemoryUnitOfWork
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.canonical_conversions import CANONICAL_ARTIFACT_CONVERSIONS_BY_KEY
-from grafy_plugin_table.persistence import TableArtifactWriter
+from grafy_workbench.table.persistence import TableArtifactWriter
 from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import SqlAlchemySavedGraphUnitOfWork
 
@@ -53,8 +53,6 @@ def builtin_client(tmp_path: Path) -> Iterator[TestClient]:
         workspace=tmp_path / "workbench",
         saved_graphs=saved_graphs,
         plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
-        system_host_bindings=deployment.host_bindings,
-        loaded_system_plugins=deployment.loaded_plugins,
     )
     try:
         with client_with_overrides(
@@ -85,8 +83,6 @@ def table_artifact_client(
         unit_of_work=unit_of_work,
         storage=storage,
         plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
-        system_host_bindings=deployment.host_bindings,
-        loaded_system_plugins=deployment.loaded_plugins,
     )
     writer = TableArtifactWriter(
         storage=storage,
@@ -124,8 +120,6 @@ def conversion_path_client(
         unit_of_work=uow,
         canonical_artifact_conversions=canonical_conversions,
         plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
-        system_host_bindings=deployment.host_bindings,
-        loaded_system_plugins=deployment.loaded_plugins,
     )
     with client_with_overrides(
         settings=Settings(
@@ -149,8 +143,6 @@ def structural_projection_client(tmp_path: Path) -> Iterator[TestClient]:
         plugin_registry=registry,
         workspace=tmp_path / "workbench",
         plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
-        system_host_bindings=deployment.host_bindings,
-        loaded_system_plugins=deployment.loaded_plugins,
     )
     with client_with_overrides(
         settings=Settings(

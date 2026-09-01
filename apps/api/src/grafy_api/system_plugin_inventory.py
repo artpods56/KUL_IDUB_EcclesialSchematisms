@@ -25,7 +25,6 @@ from grafy_core.domain.plugin_installations import (
 from grafy_core.domain.plugin_releases import (
     PluginArtifactConversionContract,
     PluginCatalogManifest,
-    PluginDistribution,
     PluginExecutionPolicy,
     PluginRelease,
     PluginReleaseScope,
@@ -44,13 +43,6 @@ from grafy_api.system_host_bindings import SystemHostPluginBinding
 
 SYSTEM_PLUGIN_SLUGS = frozenset(
     {
-        "builtin.arithmetic",
-        "builtin.image",
-        "builtin.prompt",
-        "builtin.schema",
-        "builtin.sequence",
-        "builtin.table",
-        "builtin.text",
         "external.gis",
         "external.llm",
         "external.ocr",
@@ -101,7 +93,6 @@ class SystemPluginInventoryEntry(_InventoryValue):
         pattern=r"^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$",
         max_length=512,
     )
-    distribution: PluginDistribution
     execution_policy: PluginExecutionPolicy
     capabilities: tuple[PluginRuntimeCapability, ...] = ()
     operator_prefixes: tuple[SystemPluginIdentityPrefix, ...] = Field(min_length=1)
@@ -588,11 +579,6 @@ class SystemBaselineManifestGenerator:
         if release.execution_policy is not entry.execution_policy:
             raise SystemPluginInventoryError(
                 f"Selected System release {entry.slug!r} execution policy does not "
-                "match the static inventory"
-            )
-        if release.distribution is not entry.distribution:
-            raise SystemPluginInventoryError(
-                f"Selected System release {entry.slug!r} distribution does not "
                 "match the static inventory"
             )
         if release.capabilities.capabilities != entry.capabilities:

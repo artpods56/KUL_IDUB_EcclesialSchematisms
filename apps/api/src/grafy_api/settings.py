@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar, Literal
+import secrets
 import warnings
 from urllib.parse import urlsplit
 
@@ -35,6 +36,15 @@ _OIDC_ALLOWED_ALGORITHMS = frozenset(
 )
 
 STAGED_UPLOAD_HARD_MAX_BYTES = 64 * 1024 * 1024
+_BUILD_DIGEST_PATTERN = r"^[0-9a-f]{64}$"
+_EPHEMERAL_BUILD_DIGEST: str | None = None
+
+
+def _ephemeral_build_digest() -> str:
+    global _EPHEMERAL_BUILD_DIGEST
+    if _EPHEMERAL_BUILD_DIGEST is None:
+        _EPHEMERAL_BUILD_DIGEST = secrets.token_hex(32)
+    return _EPHEMERAL_BUILD_DIGEST
 
 
 class Settings(BaseSettings):
@@ -48,6 +58,8 @@ class Settings(BaseSettings):
     workspace: Path = Path(".grafy-artifacts/workbench")
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_renderer: Literal["console", "json"] = "console"
+    environment: Literal["production", "development"] = "development"
+    build_digest: str | None = Field(default=None, pattern=_BUILD_DIGEST_PATTERN)
     public_origin: str = "http://localhost:3000"
     oidc_issuer: str | None = None
     oidc_client_id: str | None = None
@@ -296,6 +308,14 @@ class Settings(BaseSettings):
                 "Auth session idle lifetime must be below absolute lifetime"
             )
         return self
+
+    @property
+    def resolved_build_digest(self) -> str:
+        if self.build_digest is not None:
+            return self.build_digest
+        if self.environment == "production":
+            raise ValueError("GRAFY_BUILD_DIGEST is required in production")
+        return _ephemeral_build_digest()
 
     @property
     def resolved_database_url(self) -> str:

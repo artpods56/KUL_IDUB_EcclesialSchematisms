@@ -27,7 +27,7 @@ from grafy_core.table_contracts import (
     TableValueType,
 )
 from grafy_core.runtime.table_storage import load_table_manifest
-from grafy_plugin_table.persistence import TableArtifactWriter
+from grafy_workbench.table.persistence import TableArtifactWriter
 from grafy_core.runtime.materialization import MaterializationProvenance
 from grafy_core.runtime.persistence import ArtifactWriteContext
 from grafy_core.ports.storage import SaveFileCommand, StoredObjectInfo
@@ -71,6 +71,7 @@ def _run_output_artifact_id(
         RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id=node_id,
                     operator_id=operator_id,
                     operator_version=1,
@@ -353,6 +354,7 @@ async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> 
         request = RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="persistent-text",
                     operator_id="text.input",
                     operator_version=1,
@@ -366,8 +368,6 @@ async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> 
             workspace=tmp_path / "workbench",
             unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
             plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
-            system_host_bindings=deployment.host_bindings,
-            loaded_system_plugins=deployment.loaded_plugins,
         )
         first_response = await first_components.presenter.run_response(
             WORKSPACE_ID,
@@ -381,8 +381,6 @@ async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> 
             workspace=tmp_path / "workbench",
             unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
             plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
-            system_host_bindings=deployment.host_bindings,
-            loaded_system_plugins=deployment.loaded_plugins,
         )
         repeated_response = await fresh_components.presenter.run_response(
             WORKSPACE_ID,

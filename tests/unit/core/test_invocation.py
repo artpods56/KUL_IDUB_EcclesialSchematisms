@@ -14,11 +14,13 @@ from grafy_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
-from grafy_core.domain.invocation_cache import InvocationCacheEntry
-from grafy_core.domain.plugin_releases import (
-    PluginReleaseIdentity,
-    plugin_contract_digest,
+from grafy_core.domain.implementation import (
+    BuiltinImplementationIdentity,
+    PluginImplementationIdentity,
 )
+from grafy_core.domain.invocation_cache import InvocationCacheEntry
+from grafy_core.domain.plugin_identity import PluginReleaseScope
+from grafy_core.domain.saved_graphs import SavedGraphPluginReleasePin
 from grafy_core.nodes import (
     InPort,
     Node,
@@ -707,43 +709,23 @@ async def test_exact_cache_bypasses_inputs_without_content_hashes() -> None:
     assert cache.entries == {}
 
 
-def _release_identity(revision: int) -> PluginReleaseIdentity:
-    from grafy_core.domain.plugin_releases import (
-        PluginCatalogManifest,
-        PluginNodeContract,
-        PluginReleaseScope,
-    )
-
-    catalog = PluginCatalogManifest(
-        slug="notes",
-        title="Notes",
-        nodes=(
-            PluginNodeContract(
-                operator_id="notes.echo",
-                operator_version=1,
-                title="Echo",
-                description="Echo text",
-                config_schema={"type": "object"},
-                input_schema={"type": "object"},
-                output_schema={"type": "object"},
-                inputs=(),
-                outputs=(),
-            ),
+def _plugin_identity(revision: int) -> PluginImplementationIdentity:
+    return PluginImplementationIdentity(
+        plugin_release_pin=SavedGraphPluginReleasePin(
+            scope=PluginReleaseScope.WORKSPACE,
+            slug="notes",
+            revision=revision,
         ),
-    )
-    return PluginReleaseIdentity(
-        scope=PluginReleaseScope.WORKSPACE,
-        workspace_id=TEST_WORKSPACE_ID,
-        slug=catalog.slug,
-        revision=revision,
-        source_digest=f"{revision}" * 64,
-        contract_digest=plugin_contract_digest(catalog),
-        protocol_digest="b" * 64,
-        descriptor_digest="c" * 64,
+        manifest_digest="d" * 64,
+        image_digest="e" * 64,
     )
 
 
-def test_invocation_cache_key_scopes_to_the_exact_plugin_release() -> None:
+def _builtin_identity(digest: str) -> BuiltinImplementationIdentity:
+    return BuiltinImplementationIdentity(build_digest=digest)
+
+
+def test_invocation_cache_key_scopes_to_implementation_identity() -> None:
     input_ref = ArtifactRef.from_key(
         artifact_id=uuid4(),
         key=INPUT_VALUE.key,
@@ -756,39 +738,42 @@ def test_invocation_cache_key_scopes_to_the_exact_plugin_release() -> None:
     node = ScalarNode()
     inputs = {"item": input_ref}
     config = NoConfig.model_validate({})
-    unpinned = invocation_cache_key(
-        node=node,
-        context=context,
-        inputs=inputs,
-        config=config,
-        artifact_type_bindings={},
-        opaque_secret_revisions={},
+    kwargs = {
+        "node": node,
+        "context": context,
+        "inputs": inputs,
+        "config": config,
+        "artifact_type_bindings": {},
+        "opaque_secret_revisions": {},
+    }
+    missing = invocation_cache_key(**kwargs)
+    builtin_one = invocation_cache_key(
+        **kwargs,
+        implementation=_builtin_identity("a" * 64),
     )
-    release_one = invocation_cache_key(
-        node=node,
-        context=context,
-        inputs=inputs,
-        config=config,
-        artifact_type_bindings={},
-        opaque_secret_revisions={},
-        plugin_release=_release_identity(1),
+    builtin_two = invocation_cache_key(
+        **kwargs,
+        implementation=_builtin_identity("b" * 64),
     )
-    release_two = invocation_cache_key(
-        node=node,
-        context=context,
-        inputs=inputs,
-        config=config,
-        artifact_type_bindings={},
-        opaque_secret_revisions={},
-        plugin_release=_release_identity(2),
+    plugin_one = invocation_cache_key(
+        **kwargs,
+        implementation=_plugin_identity(1),
+    )
+    plugin_two = invocation_cache_key(
+        **kwargs,
+        implementation=_plugin_identity(2),
     )
 
-    assert unpinned is not None
-    assert release_one is not None
-    assert release_two is not None
-    assert unpinned != release_one
-    assert release_one != release_two
+    assert missing is not None
+    assert builtin_one is not None
+    assert builtin_two is not None
+    assert plugin_one is not None
+    assert plugin_two is not None
+    assert missing != builtin_one
+    assert builtin_one != builtin_two
+    assert plugin_one != plugin_two
+    assert builtin_one != plugin_one
 
 
-def test_invocation_fingerprint_version_covers_release_identity() -> None:
-    assert INVOCATION_CACHE_FINGERPRINT_VERSION >= 3
+def test_invocation_fingerprint_version_covers_implementation_identity() -> None:
+    assert INVOCATION_CACHE_FINGERPRINT_VERSION >= 4

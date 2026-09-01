@@ -26,7 +26,7 @@ from grafy_core.table_contracts import (
     TableColumn,
     TableValueType,
 )
-from grafy_plugin_table import TABLES
+from grafy_workbench.table import TABLES
 from grafy_core.plugins import (
     NodeHttpEgressInput,
     PluginRegistry,

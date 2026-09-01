@@ -24,7 +24,6 @@ from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.domain.plugin_releases import (
     PluginCapabilityManifest,
     PluginCatalogManifest,
-    PluginDistribution,
     PluginExecutionPolicy,
     PluginRelease,
     PluginReleaseIdentity,
@@ -73,7 +72,7 @@ from grafy_core.runtime.plugin_protocol import (
     PluginInvocationLimits,
 )
 from grafy_core.runtime.resolvers import ResolverRegistry
-from grafy_plugin_text.nodes import TextValueOutputWriter, TextValueResolver
+from grafy_workbench.text.nodes import TextValueOutputWriter, TextValueResolver
 from grafy_storage import LocalFileObjectStore
 
 from grafy_api.v1.routes.executions.models import RunNodeRequest
@@ -321,7 +320,6 @@ def _release() -> InstalledPluginRelease:
                 workspace_id=None,
             ),
             execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-            distribution=PluginDistribution.BUNDLED,
             installed_by_user_id=None,
             installed_by_platform_actor="test:parity",
         ),
@@ -372,7 +370,6 @@ def _secret_release() -> InstalledPluginRelease:
             release,
             namespace=base.namespace,
             execution_policy=base.execution_policy,
-            distribution=base.distribution,
             installed_by_user_id=None,
             installed_by_platform_actor=base.published_by_platform_actor,
         ),
@@ -722,6 +719,7 @@ async def test_same_exact_system_release_has_graph_result_failure_code_parity(
         ("oci", oci_uow, oci_node, oci_input),
     ):
         request = RunNodeRequest(
+            kind="builtin",
             id=f"{label}-failure",
             operator_id=contract.operator_id,
             operator_version=contract.operator_version,
@@ -872,6 +870,7 @@ async def test_isolated_exact_cache_keys_include_opaque_secret_revision(
         NodeOutput,
     ] = PluginReleaseNode(release, contract, invoker)
     request = RunNodeRequest(
+        kind="builtin",
         id="secret-node",
         operator_id=contract.operator_id,
         operator_version=contract.operator_version,

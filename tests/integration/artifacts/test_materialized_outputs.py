@@ -16,7 +16,6 @@ from grafy_core.artifacts import ArtifactObject, ArtifactRef, ArtifactRefSequenc
 from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.domain.materialized_outputs import MaterializedNodeOutputs
-from grafy_core.domain.plugin_releases import PluginReleaseScope
 from grafy_core.domain.saved_graphs import SavedGraphDocument
 from grafy_persistence import schema
 from grafy_persistence.database import create_database
@@ -31,7 +30,6 @@ from grafy_api.settings import Settings
 from grafy_api.v1.models import (
     ArtifactTypeBindingModel,
     ArtifactTypeKeyResponse,
-    PluginReleasePinModel,
 )
 from grafy_api.v1.routes.auth.dependencies import browser_actor, workspace_actor
 from grafy_api.v1.routes.executions.models import (
@@ -77,21 +75,6 @@ _OVERRIDES = {
     browser_actor: browser_actor_override,
     workspace_actor: browser_actor_override,
 }
-_ARITHMETIC_RELEASE = PluginReleasePinModel(
-    scope=PluginReleaseScope.SYSTEM,
-    slug="builtin.arithmetic",
-    revision=1,
-)
-_TEXT_RELEASE = PluginReleasePinModel(
-    scope=PluginReleaseScope.SYSTEM,
-    slug="builtin.text",
-    revision=1,
-)
-_SEQUENCE_RELEASE = PluginReleasePinModel(
-    scope=PluginReleaseScope.SYSTEM,
-    slug="builtin.sequence",
-    revision=1,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,8 +183,6 @@ def _durable_client(fixture: DurableApiFixture) -> Iterator[TestClient]:
         bucket=fixture.settings.storage_bucket,
         saved_graphs=saved_graphs,
         plugin_releases=plugin_releases,
-        system_host_bindings=deployment.host_bindings,
-        loaded_system_plugins=deployment.loaded_plugins,
     )
     overrides = {
         **_OVERRIDES,
@@ -230,12 +211,12 @@ def _graph_payload(expected_revision: int | None = None) -> dict[str, object]:
     edges = _edges()
     node_models = [
         SavedGraphNodeModel(
+            kind="builtin",
             id=node_id,
             operator_id=operator_id,
             operator_version=1,
             config=config,
             position=GraphPointModel(x=float(index * 200), y=20.0),
-            plugin_release=_ARITHMETIC_RELEASE,
         )
         for index, (node_id, operator_id, config) in enumerate(nodes)
     ]
@@ -298,36 +279,36 @@ def _edges() -> list[dict[str, object]]:
 def _collect_graph_payload() -> dict[str, object]:
     nodes = [
         SavedGraphNodeModel(
+            kind="builtin",
             id="first",
             operator_id="text.input",
             operator_version=1,
             config={"text": "first"},
             position=GraphPointModel(x=0.0, y=0.0),
-            plugin_release=_TEXT_RELEASE,
         ),
         SavedGraphNodeModel(
+            kind="builtin",
             id="sequence-input",
             operator_id="text.input",
             operator_version=1,
             config={"text": "second|third"},
             position=GraphPointModel(x=200.0, y=0.0),
-            plugin_release=_TEXT_RELEASE,
         ),
         SavedGraphNodeModel(
+            kind="builtin",
             id="split",
             operator_id="text.split",
             operator_version=1,
             config={"separator": "|"},
             position=GraphPointModel(x=400.0, y=0.0),
-            plugin_release=_TEXT_RELEASE,
         ),
         SavedGraphNodeModel(
+            kind="builtin",
             id="collect",
             operator_id="sequence.collect",
             operator_version=1,
             config={},
             position=GraphPointModel(x=600.0, y=0.0),
-            plugin_release=_SEQUENCE_RELEASE,
             artifact_type_bindings=[
                 ArtifactTypeBindingModel(
                     variable="T",
@@ -403,24 +384,28 @@ def _full_run_payload(graph_id: str, graph_revision: int) -> dict[str, object]:
     return RunRequest(
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="nine",
                 operator_id="arithmetic.number",
                 operator_version=1,
                 config={"value": 9},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="four",
                 operator_id="arithmetic.number",
                 operator_version=1,
                 config={"value": 4},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="add",
                 operator_id="arithmetic.add",
                 operator_version=1,
                 config={},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="multiply",
                 operator_id="arithmetic.multiply",
                 operator_version=1,
@@ -442,6 +427,7 @@ def _downstream_run_payload(
     payload = RunRequest(
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="multiply",
                 operator_id="arithmetic.multiply",
                 operator_version=1,
@@ -554,6 +540,7 @@ def test_materialization_context_validates_graph_revision_and_fragment(
             json=RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="builtin",
                         id="rogue-node",
                         operator_id="arithmetic.number",
                         operator_version=1,
@@ -917,6 +904,7 @@ def test_downstream_run_without_materialization_returns_dependency_guidance(
                 json=RunRequest(
                     nodes=[
                         RunNodeRequest(
+                            kind="builtin",
                             id="standalone",
                             operator_id="arithmetic.number",
                             operator_version=1,
@@ -1044,18 +1032,21 @@ def test_saved_run_rejects_pin_that_is_not_the_latest_materialization(
             json=RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="builtin",
                         id="eight",
                         operator_id="arithmetic.number",
                         operator_version=1,
                         config={"value": 8},
                     ),
                     RunNodeRequest(
+                        kind="builtin",
                         id="three",
                         operator_id="arithmetic.number",
                         operator_version=1,
                         config={"value": 3},
                     ),
                     RunNodeRequest(
+                        kind="builtin",
                         id="add",
                         operator_id="arithmetic.add",
                         operator_version=1,

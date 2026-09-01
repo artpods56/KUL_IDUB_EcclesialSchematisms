@@ -183,6 +183,7 @@ function unavailableNodeSpec(savedNode: SavedGraphNode): NodeSpec {
     operator_id: savedNode.operator_id,
     operator_version: savedNode.operator_version,
     plugin_slug: "unavailable",
+    origin: savedNode.kind,
     title: savedNode.operator_id,
     description: `Saved operator ${identity} is not available in the live registry.`,
     catalog_visible: false,

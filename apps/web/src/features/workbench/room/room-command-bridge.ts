@@ -42,6 +42,7 @@ function toRoomSavedGraphNode(node: AuthoredGraphDocument["nodes"][number]): Roo
     ),
     config: structuredClone(node.config ?? {}),
     id: node.id,
+    kind: node.kind,
     input_plugs: (node.input_plugs ?? []).map((plug) => ({
       id: plug.id,
       port: plug.port,
@@ -108,7 +109,7 @@ export function toRoomReplaceDocumentCommand(
     kind: "replace_document",
     name: document.name,
     document: {
-      schema_version: 5,
+      schema_version: 6,
       nodes: document.nodes.map(toRoomSavedGraphNode),
       edges: document.edges.map(toRoomSavedGraphEdge),
       presentation: {
@@ -134,6 +135,7 @@ function toRestSavedGraphNode(node: RoomSavedGraphNode): AuthoredGraphDocument["
     ),
     config: structuredClone(node.config ?? {}),
     id: node.id,
+    kind: node.kind,
     input_plugs: (node.input_plugs ?? []).map((plug) => ({
       id: plug.id,
       port: plug.port,
@@ -176,6 +178,7 @@ function toCollaborativeSavedGraphNode(
     })),
     config: structuredClone(node.config ?? {}),
     id: node.id,
+    kind: node.kind,
     input_plugs: node.input_plugs.map((plug) => ({
       id: plug.id,
       port: plug.port,

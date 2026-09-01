@@ -24,7 +24,7 @@ from grafy_core.table_contracts import (
     TableColumn,
     TableValueType,
 )
-from grafy_plugin_table.persistence import TableArtifactWriter
+from grafy_workbench.table.persistence import TableArtifactWriter
 from grafy_core.runtime.materialization import MaterializationProvenance
 from grafy_core.runtime.persistence import ArtifactWriteContext
 from grafy_storage import LocalFileObjectStore
@@ -303,6 +303,7 @@ def test_table_page_rejects_non_table_and_invalid_limits(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="text",
                     operator_id="text.input",
                     operator_version=1,

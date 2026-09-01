@@ -55,7 +55,7 @@ from grafy_core.runtime.plugin_protocol import (
     PluginStagedUploadBinding,
 )
 from grafy_core.staged_upload_paths import resolve_persisted_staged_upload_path
-from grafy_plugin_text import TEXT
+from grafy_workbench.text import TEXT
 
 import grafy_core.runtime.plugin_guest as plugin_guest_module
 
@@ -68,7 +68,7 @@ def _loader_release(
     *,
     scope: PluginReleaseScope = PluginReleaseScope.SYSTEM,
     workspace_id: UUID | None = None,
-    slug: str = "builtin.text",
+    slug: str = "text",
     contract_digest: str | None = None,
 ) -> PluginInvocationRelease:
     return PluginInvocationRelease(
@@ -89,8 +89,8 @@ def test_system_guest_loads_the_image_owned_family_target(tmp_path: Path) -> Non
     manifest_path = tmp_path / "plugin-loader.json"
     manifest_path.write_bytes(
         PluginGuestLoaderManifest(
-            slug="builtin.text",
-            loader_target="grafy_plugin_text.plugin:TEXT",
+            slug="text",
+            loader_target="grafy_workbench.text.plugin:TEXT",
         ).canonical_json_bytes()
     )
 
@@ -109,8 +109,8 @@ def test_system_guest_rejects_manifest_and_contract_identity_drift(
     manifest_path = tmp_path / "plugin-loader.json"
     manifest_path.write_bytes(
         PluginGuestLoaderManifest(
-            slug="builtin.arithmetic",
-            loader_target="grafy_plugin_text.plugin:TEXT",
+            slug="arithmetic",
+            loader_target="grafy_workbench.text.plugin:TEXT",
         ).canonical_json_bytes()
     )
 
@@ -122,8 +122,8 @@ def test_system_guest_rejects_manifest_and_contract_identity_drift(
 
     manifest_path.write_bytes(
         PluginGuestLoaderManifest(
-            slug="builtin.text",
-            loader_target="grafy_plugin_text.plugin:TEXT",
+            slug="text",
+            loader_target="grafy_workbench.text.plugin:TEXT",
         ).canonical_json_bytes()
     )
     with pytest.raises(PluginGuestError, match="contract does not match"):
@@ -140,7 +140,7 @@ def test_workspace_guest_uses_the_same_image_owned_loader_manifest(
     manifest_path = tmp_path / "plugin-loader.json"
     manifest_path.write_bytes(
         PluginGuestLoaderManifest(
-            slug="builtin.text",
+            slug="text",
             loader_target="workspace_plugin:CUSTOM_PLUGIN",
         ).canonical_json_bytes()
     )

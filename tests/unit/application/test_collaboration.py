@@ -464,6 +464,7 @@ async def test_bootstrap_graph_commits_head_checkpoint_and_receipt() -> None:
         document=SavedGraphDocument(
             nodes=(
                 SavedGraphNode(
+                    kind="builtin",
                     id="n1",
                     operator_id="example.operator",
                     operator_version=1,
@@ -653,6 +654,7 @@ async def test_replace_complete_document_resets_epoch_when_checkpointed() -> Non
         document=SavedGraphDocument(
             nodes=(
                 SavedGraphNode(
+                    kind="builtin",
                     id="n1",
                     operator_id="example.operator",
                     operator_version=1,
@@ -831,6 +833,7 @@ async def test_accept_command_rebases_move_against_newer_head() -> None:
     service = _service(factory)
     graph_id = uuid4()
     node = SavedGraphNode(
+        kind="builtin",
         id="n1",
         operator_id="example.operator",
         operator_version=1,
@@ -885,6 +888,7 @@ async def test_accept_command_rebases_plugin_release_cas_against_newer_head() ->
     )
     next_pin = current_pin.model_copy(update={"revision": 2})
     node = SavedGraphNode(
+        kind="builtin",
         id="n1",
         operator_id="notes.write",
         operator_version=1,
@@ -984,6 +988,7 @@ async def test_copy_exact_head_bootstraps_target_without_source_secrets() -> Non
             document=SavedGraphDocument(
                 nodes=(
                     SavedGraphNode(
+                        kind="builtin",
                         id="n1",
                         operator_id="example.operator",
                         operator_version=1,
@@ -1331,6 +1336,7 @@ async def test_workspace_qualified_mutations_leave_no_cross_workspace_state() ->
             document=SavedGraphDocument(
                 nodes=(
                     SavedGraphNode(
+                        kind="builtin",
                         id="n1",
                         operator_id="example.operator",
                         operator_version=1,

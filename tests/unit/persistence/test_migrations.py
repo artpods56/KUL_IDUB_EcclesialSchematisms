@@ -2371,6 +2371,156 @@ def test_0021_downgrade_refuses_to_discard_revocation_provenance(
     get_settings.cache_clear()
 
 
+def test_0026_wipes_graph_plugin_data_and_drops_installation_distribution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "drop-distribution" / "migrated.sqlite3"
+    monkeypatch.setenv("GRAFY_DATABASE_URL", f"sqlite+aiosqlite:///{database_path}")
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0025_platform_access_tokens")
+
+    user_hex = UUID("00000000-0000-0000-0000-000000002601").hex
+    workspace_hex = UUID("00000000-0000-0000-0000-000000002602").hex
+    graph_hex = UUID("00000000-0000-0000-0000-000000002603").hex
+    artifact_hex = UUID("00000000-0000-0000-0000-000000002604").hex
+    release_hex = UUID("00000000-0000-0000-0000-000000002605").hex
+    installation_hex = UUID("00000000-0000-0000-0000-000000002606").hex
+    timestamp = "2026-09-01 10:00:00"
+    document = json.dumps({"schema_version": 6, "nodes": [], "edges": []})
+    digest = "a" * 64
+
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        assert "distribution" in {
+            column["name"]
+            for column in inspect(connection).get_columns("plugin_installations")
+        }
+        connection.execute(
+            text(
+                "INSERT INTO users (id, email, display_name, active, created_at, "
+                "updated_at) VALUES (:id, 'cutover@example.test', 'Cutover', 1, "
+                ":timestamp, :timestamp)"
+            ),
+            {"id": user_hex, "timestamp": timestamp},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO workspaces "
+                "(id, slug, name, kind, created_at, updated_at) VALUES "
+                "(:id, 'cutover', 'Cutover', 'shared', :timestamp, :timestamp)"
+            ),
+            {"id": workspace_hex, "timestamp": timestamp},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO saved_graphs "
+                "(workspace_id, id, name, document, revision, created_at, "
+                "updated_at) VALUES (:workspace_id, :graph_id, 'Cutover graph', "
+                ":document, 1, :timestamp, :timestamp)"
+            ),
+            {
+                "workspace_id": workspace_hex,
+                "graph_id": graph_hex,
+                "document": document,
+                "timestamp": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO artifact_objects "
+                "(id, workspace_id, artifact_type, schema_version, content_type, "
+                "storage_backend, metadata) VALUES (:artifact_id, :workspace_id, "
+                "'scalar.text', 1, 'application/json', 'inline', '{}')"
+            ),
+            {"artifact_id": artifact_hex, "workspace_id": workspace_hex},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO plugin_releases ("
+                "id, slug, revision, catalog, capabilities, capability_digest, "
+                "source_object_key, source_digest, lock_digest, runtime_profile, "
+                "loader_target, published_by_platform_actor, published_at) VALUES ("
+                ":id, 'notes', 1, :catalog, :capabilities, :digest, "
+                "'plugin-releases/system/notes/source.tar.gz', :digest, :digest, "
+                "'python-uv', 'grafy_plugin:PLUGIN', 'test:cutover', :timestamp)"
+            ),
+            {
+                "id": release_hex,
+                "catalog": json.dumps({"slug": "notes", "title": "Notes"}),
+                "capabilities": json.dumps({"capabilities": []}),
+                "digest": digest,
+                "timestamp": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO plugin_installations ("
+                "id, release_id, scope, workspace_id, slug, release_revision, "
+                "execution_policy, distribution, installed_by_user_id, "
+                "installed_by_platform_actor, installed_at) VALUES ("
+                ":id, :release_id, 'system', NULL, 'notes', 1, 'isolated-only', "
+                "'optional', NULL, 'test:cutover', :timestamp)"
+            ),
+            {
+                "id": installation_hex,
+                "release_id": release_hex,
+                "timestamp": timestamp,
+            },
+        )
+
+    command.upgrade(config, "head")
+    command.check(config)
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        columns = {
+            column["name"]
+            for column in inspect(connection).get_columns("plugin_installations")
+        }
+        assert "distribution" not in columns
+        table_sql = connection.execute(
+            text(
+                "SELECT sql FROM sqlite_master WHERE name = 'plugin_installations'"
+            )
+        ).scalar_one()
+        assert "bundled" not in table_sql
+        assert "isolated-only" in table_sql
+        assert connection.execute(text("SELECT COUNT(*) FROM saved_graphs")).scalar_one() == 0
+        assert (
+            connection.execute(text("SELECT COUNT(*) FROM plugin_releases")).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                text("SELECT COUNT(*) FROM plugin_installations")
+            ).scalar_one()
+            == 0
+        )
+        assert connection.execute(text("SELECT COUNT(*) FROM users")).scalar_one() == 1
+        assert (
+            connection.execute(text("SELECT COUNT(*) FROM workspaces")).scalar_one() == 1
+        )
+        assert (
+            connection.execute(text("SELECT COUNT(*) FROM artifact_objects")).scalar_one()
+            == 1
+        )
+
+    command.downgrade(config, "0025_platform_access_tokens")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        columns = {
+            column["name"]
+            for column in inspect(connection).get_columns("plugin_installations")
+        }
+        assert "distribution" in columns
+        assert connection.execute(text("SELECT COUNT(*) FROM users")).scalar_one() == 1
+        assert (
+            connection.execute(text("SELECT COUNT(*) FROM artifact_objects")).scalar_one()
+            == 1
+        )
+        assert connection.execute(text("SELECT COUNT(*) FROM saved_graphs")).scalar_one() == 0
+    get_settings.cache_clear()
+
+
 def test_plugin_registry_unique_indexes_compile_for_postgresql() -> None:
     indexes = {
         str(index.name): index

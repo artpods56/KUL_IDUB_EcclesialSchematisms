@@ -122,6 +122,7 @@ class NestedModuleObservingRunGraph(RunGraph):
             document=SavedGraphDocument(
                 nodes=(
                     SavedGraphNode(
+                        kind="builtin",
                         id="input",
                         operator_id="module.input",
                         operator_version=1,
@@ -130,6 +131,7 @@ class NestedModuleObservingRunGraph(RunGraph):
                         artifact_type_bindings=(binding,),
                     ),
                     SavedGraphNode(
+                        kind="builtin",
                         id="output",
                         operator_id="module.output",
                         operator_version=1,

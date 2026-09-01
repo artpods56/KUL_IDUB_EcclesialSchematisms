@@ -62,6 +62,7 @@ def test_nested_json_string_projects_directly_and_integer_converts_to_text(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="api",
                     operator_id="test.api_response",
                     operator_version=1,
@@ -69,12 +70,14 @@ def test_nested_json_string_projects_directly_and_integer_converts_to_text(
                     config={},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="name",
                     operator_id="text.replace",
                     operator_version=1,
                     config={"search": "b", "replacement": "B"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="retries",
                     operator_id="text.replace",
                     operator_version=1,
@@ -134,6 +137,7 @@ def test_projected_values_feed_generic_collect_with_optional_conversion(
         json=RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="api",
                     operator_id="test.api_response",
                     operator_version=1,
@@ -141,6 +145,7 @@ def test_projected_values_feed_generic_collect_with_optional_conversion(
                     config={},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="collect",
                     operator_id="sequence.collect",
                     operator_version=1,

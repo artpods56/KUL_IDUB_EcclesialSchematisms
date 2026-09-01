@@ -43,6 +43,7 @@ describe("ordered input plugs", () => {
       operator_id: "schema.builder",
       operator_version: 1,
       plugin_slug: "builtin.schema",
+      origin: "builtin",
       title: "Schema Builder",
       description: "Build a JSON Schema.",
       catalog_visible: true,

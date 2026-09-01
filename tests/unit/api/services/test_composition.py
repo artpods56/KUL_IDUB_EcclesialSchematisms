@@ -9,12 +9,12 @@ from grafy_core.artifacts import (
     InMemoryUnitOfWork,
     JsonObject,
 )
-from grafy_plugin_arithmetic.nodes import (
+from grafy_workbench.arithmetic.nodes import (
     INTEGER_VALUE,
     IntegerValueOutputWriter,
     IntegerValueResolver,
 )
-from grafy_plugin_text.nodes import (
+from grafy_workbench.text.nodes import (
     TEXT_VALUE,
     TextValueOutputWriter,
     TextValueResolver,

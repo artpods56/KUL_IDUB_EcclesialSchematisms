@@ -16,8 +16,8 @@ from grafy_core.domain.plugin_releases import (
     plugin_contract_digest,
 )
 from grafy_core.plugins import Plugin
-from grafy_plugin_arithmetic import ARITHMETIC
-from grafy_plugin_text import TEXT
+from grafy_workbench.arithmetic import ARITHMETIC
+from grafy_workbench.text import TEXT
 
 from grafy_api import system_plugin_loader
 from grafy_api.system_host_bindings import (
@@ -155,7 +155,7 @@ def test_loader_returns_exact_plugins_manifests_and_bindings(
     assert loaded.plugins == (TEXT,)
     assert loaded.loaded_plugins == (
         LoadedSystemPlugin(
-            slug="builtin.text",
+            slug="text",
             loader_target=_LOADER_TARGET,
             host_build_digest=manifest.plugins[0].host_build_digest,
         ),
@@ -328,7 +328,7 @@ def test_loader_rejects_missing_distribution_with_context(
 
     with pytest.raises(
         SystemPluginDeploymentError,
-        match=r"System Plugin 'builtin.text' distribution .* is not installed",
+        match=r"System Plugin 'text' distribution .* is not installed",
     ) as raised:
         load_system_plugin_deployment(_manifest(_binding("f" * 64)))
 
@@ -349,7 +349,7 @@ def test_loader_preserves_import_failure_context(
 
     with pytest.raises(
         SystemPluginDeploymentError,
-        match=r"Failed to import System Plugin 'builtin.text' loader target",
+        match=r"Failed to import System Plugin 'text' loader target",
     ) as raised:
         load_system_plugin_deployment(manifest)
 
@@ -380,7 +380,7 @@ def test_loader_rejects_non_plugin_and_slug_mismatch(
         load_system_plugin_deployment(manifest)
 
     module.PLUGIN = Plugin(slug="builtin.other", title="Other")  # type: ignore[attr-defined]
-    with pytest.raises(SystemPluginDeploymentError, match="expected 'builtin.text'"):
+    with pytest.raises(SystemPluginDeploymentError, match="expected 'text'"):
         load_system_plugin_deployment(manifest)
 
 

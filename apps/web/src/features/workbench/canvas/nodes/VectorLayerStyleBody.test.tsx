@@ -20,6 +20,7 @@ function vectorLayerSpec(): NodeSpec {
     operator_id: "gis.map.vector_layer",
     operator_version: 1,
     plugin_slug: "external.gis",
+    origin: "builtin",
     title: "Vector map layer",
     description: "Styles one feature collection.",
     catalog_visible: true,

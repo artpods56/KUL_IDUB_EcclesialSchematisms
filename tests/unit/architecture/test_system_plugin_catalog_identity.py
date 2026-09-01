@@ -11,17 +11,16 @@ from grafy_core.domain.plugin_releases import (
     PluginPortContract,
 )
 from grafy_core.plugins import Plugin
-from grafy_plugin_arithmetic import ARITHMETIC
+from grafy_workbench.arithmetic import ARITHMETIC
 from grafy_plugin_gis import GIS
-from grafy_plugin_image import IMAGES
+from grafy_workbench.image import IMAGES
 from grafy_plugin_llm import LLM
 from grafy_plugin_ocr import OCR
-from grafy_plugin_prompt import PROMPTS
-from grafy_plugin_schema import SCHEMAS
-from grafy_plugin_sequence import SEQUENCES
+from grafy_workbench.schema import SCHEMAS
+from grafy_workbench.sequence import SEQUENCES
 from grafy_plugin_sql import SQL
-from grafy_plugin_table import TABLES
-from grafy_plugin_text import TEXT
+from grafy_workbench.table import TABLES
+from grafy_workbench.text import TEXT
 
 
 SNAPSHOT_PATH = Path(__file__).with_name("system_plugin_catalog_identity.json")
@@ -31,7 +30,6 @@ SYSTEM_PLUGINS = (
     SEQUENCES,
     TEXT,
     SCHEMAS,
-    PROMPTS,
     TABLES,
     GIS,
     LLM,
@@ -39,13 +37,12 @@ SYSTEM_PLUGINS = (
     SQL,
 )
 EXPECTED_SYSTEM_PLUGIN_SLUGS = (
-    "builtin.arithmetic",
-    "builtin.image",
-    "builtin.sequence",
-    "builtin.text",
-    "builtin.schema",
-    "builtin.prompt",
-    "builtin.table",
+    "arithmetic",
+    "image",
+    "sequence",
+    "text",
+    "schema",
+    "table",
     "external.gis",
     "external.llm",
     "external.ocr",

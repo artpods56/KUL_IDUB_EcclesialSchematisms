@@ -24,7 +24,7 @@ from grafy_core.domain.execution_history import (
     GraphExecutionScope,
     GraphExecutionStatus,
 )
-from grafy_core.domain.saved_graphs import SavedGraph, SavedGraphRevision
+from grafy_core.domain.saved_graphs import SavedGraphNodeKind
 from grafy_core.nodes import (
     MAX_NODE_PROGRESS_COUNTER,
     MAX_NODE_PROGRESS_MESSAGE_LENGTH,
@@ -55,6 +55,7 @@ class RunInputPlugRequest(BaseModel):
 
 
 class RunNodeRequest(BaseModel):
+    kind: SavedGraphNodeKind
     id: ExecutionIdentifier
     operator_id: str
     operator_version: int
@@ -70,6 +71,18 @@ class RunNodeRequest(BaseModel):
         variables = [binding.variable for binding in self.artifact_type_bindings]
         if len(variables) != len(set(variables)):
             raise ValueError("Node artifact type binding variables must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def validate_kind_and_pin(self) -> "RunNodeRequest":
+        if self.kind == "plugin":
+            if self.plugin_release is None:
+                raise ValueError(
+                    "Plugin node must pin an exact Plugin release with scope, slug, "
+                    "and revision"
+                )
+        elif self.plugin_release is not None:
+            raise ValueError(f"{self.kind} node cannot carry a Plugin release pin")
         return self
 
 
@@ -150,6 +163,7 @@ class RunRequest(BaseModel):
         return cls(
             nodes=[
                 RunNodeRequest(
+                    kind=node.kind,
                     id=node.id,
                     operator_id=node.operator_id,
                     operator_version=node.operator_version,

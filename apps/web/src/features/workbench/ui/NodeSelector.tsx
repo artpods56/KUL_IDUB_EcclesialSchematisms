@@ -62,6 +62,7 @@ import {
   buildCatalogFilters,
   catalogNodeKey,
   catalogNodeSpecs,
+  catalogOriginGroups,
   filterAndSearchCatalogNodes,
   moduleReleaseSpecs,
   nodesCompatibleWithPort,
@@ -710,6 +711,12 @@ const s = stylex.create({
     backgroundColor: tokens.colorAccentSoft,
   },
   nodeCopy: { minWidth: 0, display: "grid", gap: "5px" },
+  originGroup: {
+    padding: "10px 16px 4px",
+    color: tokens.colorSubtle,
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 650,
+  },
   nodeTitleRow: {
     minWidth: 0,
     display: "flex",
@@ -1773,8 +1780,14 @@ export function NodeSelector({
                 </div>
               ) : loading ? (
                 <div {...stylex.props(s.empty)}>Loading nodes…</div>
-              ) : filteredNodes.length ? filteredNodes.map((spec, index) => {
+              ) : filteredNodes.length ? catalogOriginGroups(filteredNodes).map((group) => (
+                <React.Fragment key={group.origin}>
+                  <div {...stylex.props(s.originGroup)}>{group.title}</div>
+                  {group.nodes.map((spec) => {
                 const key = nodeKey(spec);
+                const index = filteredNodes.findIndex(
+                  (candidate) => nodeKey(candidate) === key,
+                );
                 const active = listedSpec
                   ? key === nodeKey(listedSpec)
                   : false;
@@ -1838,7 +1851,9 @@ export function NodeSelector({
                     </span>
                   </button>
                 );
-              }) : (
+              })}
+                </React.Fragment>
+              )) : (
                 <div {...stylex.props(s.empty)}>
                   <span>
                     {compatibility

@@ -1,6 +1,6 @@
 {
   "plugins": {
-    "builtin.arithmetic": {
+    "arithmetic": {
       "artifact_dependencies": [],
       "artifact_types": [
         {
@@ -416,1240 +416,6 @@
         }
       ],
       "title": "Arithmetic"
-    },
-    "builtin.image": {
-      "artifact_dependencies": [],
-      "artifact_types": [
-        {
-          "bundle": "binary-file@1",
-          "exports": [],
-          "key": "image.raster@1",
-          "materialized_json_type": null,
-          "projections": [],
-          "references": [],
-          "schema": {
-            "fields": [],
-            "required": [],
-            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
-          },
-          "title": "Raster image"
-        }
-      ],
-      "capabilities": [
-        "staged.uploads"
-      ],
-      "conversions": [],
-      "nodes": [
-        {
-          "cache_policy": "never",
-          "config": {
-            "fields": [
-              "uploads"
-            ],
-            "required": [
-              "uploads"
-            ],
-            "sha256": "9b1f32403866b458b4883c45214acbdbb9abd1c1ef737402e6b69b3f3926c02b"
-          },
-          "description": "Imports staged image uploads as an ordered raster image sequence.",
-          "input_schema": {
-            "fields": [],
-            "required": [],
-            "sha256": "e9002b1234b67a1965e4d656722325a6ff84181b2a200ec8fcbd598f6bfd481f"
-          },
-          "inputs": [],
-          "key": "image.upload@1",
-          "output_schema": {
-            "fields": [
-              "images"
-            ],
-            "required": [
-              "images"
-            ],
-            "sha256": "c88a81782580469189838adbb4a6154b58c4c33617b68cb876f7b2fb02f82196"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "many"
-              ],
-              "artifact": "image.raster@1",
-              "description": "Ordered raster images imported from staged uploads.",
-              "instance_plugs": false,
-              "name": "images",
-              "required": true,
-              "shape": "many",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [
-            "staged.uploads"
-          ],
-          "secret_inputs": [],
-          "staged_upload_inputs": [
-            "uploads"
-          ],
-          "title": "Upload images"
-        }
-      ],
-      "title": "Image"
-    },
-    "builtin.prompt": {
-      "artifact_dependencies": [
-        {
-          "bundle": "inline-json@1",
-          "exports": [
-            {
-              "content_type": "text/plain; charset=utf-8",
-              "filename": "text.txt",
-              "format": "txt"
-            }
-          ],
-          "key": "scalar.text@1",
-          "materialized_json_type": "string",
-          "projections": [],
-          "references": [],
-          "schema": {
-            "fields": [
-              "value"
-            ],
-            "required": [
-              "value"
-            ],
-            "sha256": "01a09e0f987d874bf05f4512b09d0980e8c5ddb2330fa659b75e673c4cabcab7"
-          },
-          "title": "Text value"
-        },
-        {
-          "bundle": "binary-file@1",
-          "exports": [],
-          "key": "image.raster@1",
-          "materialized_json_type": null,
-          "projections": [],
-          "references": [],
-          "schema": {
-            "fields": [],
-            "required": [],
-            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
-          },
-          "title": "Raster image"
-        }
-      ],
-      "artifact_types": [
-        {
-          "bundle": "inline-json@1",
-          "exports": [],
-          "key": "prompt.message@2",
-          "materialized_json_type": null,
-          "projections": [],
-          "references": [
-            {
-              "path": [
-                "image_refs"
-              ],
-              "shape": "many",
-              "target": "image.raster@1"
-            }
-          ],
-          "schema": {
-            "fields": [
-              "role",
-              "text",
-              "image_refs"
-            ],
-            "required": [
-              "role",
-              "text"
-            ],
-            "sha256": "0173d8cf8225040b894ac7896f4cbde4bddee71b1b72739bbaabb453097a1775"
-          },
-          "title": "Prompt message"
-        }
-      ],
-      "capabilities": [],
-      "conversions": [],
-      "nodes": [
-        {
-          "cache_policy": "exact",
-          "config": {
-            "fields": [
-              "role"
-            ],
-            "required": [],
-            "sha256": "61ab1998911acdcefac00f2890b3b90190f1b8ed698f6f6966bfd398b46d292f"
-          },
-          "description": "Composes prompt text and optional image references into one message.",
-          "input_schema": {
-            "fields": [
-              "text",
-              "images"
-            ],
-            "required": [
-              "text"
-            ],
-            "sha256": "ec7a1623003bb22f8d74ffb27075d265ace3f8583817a931bbb41b393b0a8213"
-          },
-          "inputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "scalar.text@1",
-              "description": "Text content of the prompt message.",
-              "instance_plugs": false,
-              "name": "text",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            },
-            {
-              "accepted_shapes": [
-                "many"
-              ],
-              "artifact": "image.raster@1",
-              "description": "Optional ordered image artifacts for a user message.",
-              "instance_plugs": false,
-              "name": "images",
-              "required": false,
-              "shape": "many",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "key": "prompt.message.create@2",
-          "output_schema": {
-            "fields": [
-              "message"
-            ],
-            "required": [
-              "message"
-            ],
-            "sha256": "9eb549824baa8d68c894442f16e6cf8ab53cbfc6c520dae713a2bdb74baa127c"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "prompt.message@2",
-              "description": "The composed prompt message.",
-              "instance_plugs": false,
-              "name": "message",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [],
-          "secret_inputs": [],
-          "staged_upload_inputs": [],
-          "title": "Create prompt message"
-        }
-      ],
-      "title": "Prompt"
-    },
-    "builtin.schema": {
-      "artifact_dependencies": [],
-      "artifact_types": [
-        {
-          "bundle": "inline-json@1",
-          "exports": [],
-          "key": "json.schema@1",
-          "materialized_json_type": null,
-          "projections": [],
-          "references": [],
-          "schema": {
-            "fields": [
-              "value"
-            ],
-            "required": [
-              "value"
-            ],
-            "sha256": "a87e5da78277e882134429ee13975ca6626389ab9791133d63de003daf9aae44"
-          },
-          "title": "JSON Schema"
-        }
-      ],
-      "capabilities": [],
-      "conversions": [],
-      "nodes": [
-        {
-          "cache_policy": "exact",
-          "config": {
-            "fields": [
-              "title",
-              "description",
-              "additional_properties",
-              "fields"
-            ],
-            "required": [],
-            "sha256": "4046c8894b78b3af1bb20e0a06f379d86042d34831f6a5a296ebf784467b8caa"
-          },
-          "description": "Builds one object JSON Schema with optional connected child schemas.",
-          "input_schema": {
-            "fields": [
-              "schemas"
-            ],
-            "required": [],
-            "sha256": "7288170d0955ad54b41b8ee39929301792f0c60d34b8c80e09d65f311a2f97a5"
-          },
-          "inputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "json.schema@1",
-              "description": "Connected child schemas in the order of schema-consuming fields.",
-              "instance_plugs": true,
-              "name": "schemas",
-              "required": false,
-              "shape": "one",
-              "title": null,
-              "variadic": true
-            }
-          ],
-          "key": "schema.builder@1",
-          "output_schema": {
-            "fields": [
-              "json_schema"
-            ],
-            "required": [
-              "json_schema"
-            ],
-            "sha256": "4f3f2d73a66bff2ad7da0d395618265aa396467574a8eda7b5f1a3120f2c8892"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "json.schema@1",
-              "description": "Canonical Draft 2020-12 object JSON Schema text.",
-              "instance_plugs": false,
-              "name": "json_schema",
-              "required": true,
-              "shape": "one",
-              "title": "JSON Schema",
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [],
-          "secret_inputs": [],
-          "staged_upload_inputs": [],
-          "title": "Schema Builder"
-        }
-      ],
-      "title": "Schema"
-    },
-    "builtin.sequence": {
-      "artifact_dependencies": [
-        {
-          "bundle": "inline-json@1",
-          "exports": [],
-          "key": "scalar.integer@1",
-          "materialized_json_type": "integer",
-          "projections": [],
-          "references": [],
-          "schema": {
-            "fields": [
-              "value"
-            ],
-            "required": [
-              "value"
-            ],
-            "sha256": "13dd5c9edb1aae47e4bae5d6f924e7600b5aa7d29dd9fb573bee7c75f683a4af"
-          },
-          "title": "Integer value"
-        }
-      ],
-      "artifact_types": [],
-      "capabilities": [],
-      "conversions": [],
-      "nodes": [
-        {
-          "cache_policy": "exact",
-          "config": {
-            "fields": [],
-            "required": [],
-            "sha256": "febba04b0ec95e74aa128b08a6dab81e47e290fd863588187f2bfdea359bafdd"
-          },
-          "description": "Collects homogeneous artifact refs without rewriting their payloads.",
-          "input_schema": {
-            "fields": [
-              "items"
-            ],
-            "required": [
-              "items"
-            ],
-            "sha256": "cc3d6b336d7afb034146fb8aad32258039f8003ddf93d22ac8c8db1e77375fd6"
-          },
-          "inputs": [
-            {
-              "accepted_shapes": [
-                "one",
-                "many"
-              ],
-              "artifact": "$T",
-              "description": "Artifacts and sequences in connection order.",
-              "instance_plugs": true,
-              "name": "items",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": true
-            }
-          ],
-          "key": "sequence.collect@1",
-          "output_schema": {
-            "fields": [
-              "items"
-            ],
-            "required": [
-              "items"
-            ],
-            "sha256": "fc04f193aaf0566c925671d5f6186d5633279898ece3160bbee73be48ef0c435"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "many"
-              ],
-              "artifact": "$T",
-              "description": "One sequence containing every input artifact.",
-              "instance_plugs": false,
-              "name": "items",
-              "required": true,
-              "shape": "many",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [],
-          "secret_inputs": [],
-          "staged_upload_inputs": [],
-          "title": "Collect"
-        },
-        {
-          "cache_policy": "exact",
-          "config": {
-            "fields": [],
-            "required": [],
-            "sha256": "febba04b0ec95e74aa128b08a6dab81e47e290fd863588187f2bfdea359bafdd"
-          },
-          "description": "Counts the refs in an artifact sequence.",
-          "input_schema": {
-            "fields": [
-              "items"
-            ],
-            "required": [
-              "items"
-            ],
-            "sha256": "0cd9fda3c3c3c1c547219515213ebce125082bc38001c5f7c59d6f701399663d"
-          },
-          "inputs": [
-            {
-              "accepted_shapes": [
-                "many"
-              ],
-              "artifact": "$T",
-              "description": "Sequence whose items are counted.",
-              "instance_plugs": false,
-              "name": "items",
-              "required": true,
-              "shape": "many",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "key": "sequence.count@1",
-          "output_schema": {
-            "fields": [
-              "count"
-            ],
-            "required": [
-              "count"
-            ],
-            "sha256": "b52376db4d0bc3e07c4bc85429fa35a8d2e9e672139b59af2b7e530e10de8e4e"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "scalar.integer@1",
-              "description": "Number of items in the sequence.",
-              "instance_plugs": false,
-              "name": "count",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [],
-          "secret_inputs": [],
-          "staged_upload_inputs": [],
-          "title": "Count"
-        },
-        {
-          "cache_policy": "exact",
-          "config": {
-            "fields": [
-              "start",
-              "count"
-            ],
-            "required": [],
-            "sha256": "5b0ed7af464aeba9354ef77a5d5e09ff047ef3dc58c2a368cc761816847edee1"
-          },
-          "description": "Selects a contiguous range from an ordered artifact sequence.",
-          "input_schema": {
-            "fields": [
-              "items"
-            ],
-            "required": [
-              "items"
-            ],
-            "sha256": "3a60fdeef29972e1015261d4b3d5b04a95c187a4375fb42fd57a3e7bc6fd8a75"
-          },
-          "inputs": [
-            {
-              "accepted_shapes": [
-                "many"
-              ],
-              "artifact": "$T",
-              "description": "Ordered sequence to slice.",
-              "instance_plugs": false,
-              "name": "items",
-              "required": true,
-              "shape": "many",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "key": "sequence.slice@1",
-          "output_schema": {
-            "fields": [
-              "items"
-            ],
-            "required": [
-              "items"
-            ],
-            "sha256": "47e5151163314891cc8f3e6009b724665cc01deca0da3456653f0c70dddd1045"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "many"
-              ],
-              "artifact": "$T",
-              "description": "Selected contiguous items.",
-              "instance_plugs": false,
-              "name": "items",
-              "required": true,
-              "shape": "many",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [],
-          "secret_inputs": [],
-          "staged_upload_inputs": [],
-          "title": "Slice"
-        },
-        {
-          "cache_policy": "exact",
-          "config": {
-            "fields": [
-              "index"
-            ],
-            "required": [],
-            "sha256": "29ed0b983a1e77c068e8a31f6cabf1c92babbf744aa1b5407961d0f0311577fa"
-          },
-          "description": "Picks one artifact ref from an ordered artifact sequence.",
-          "input_schema": {
-            "fields": [
-              "items"
-            ],
-            "required": [
-              "items"
-            ],
-            "sha256": "2862e7c8807dc8676d981aa5e6d6e672110c4681a98a590fc6db14cfb8640089"
-          },
-          "inputs": [
-            {
-              "accepted_shapes": [
-                "many"
-              ],
-              "artifact": "$T",
-              "description": "Ordered sequence containing the item.",
-              "instance_plugs": false,
-              "name": "items",
-              "required": true,
-              "shape": "many",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "key": "sequence.item_at@1",
-          "output_schema": {
-            "fields": [
-              "item"
-            ],
-            "required": [
-              "item"
-            ],
-            "sha256": "19484b08b95054922682b9d2284cfee68e3f3aba6f50348651a104a241836120"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "$T",
-              "description": "Artifact ref at the configured index.",
-              "instance_plugs": false,
-              "name": "item",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [],
-          "secret_inputs": [],
-          "staged_upload_inputs": [],
-          "title": "Pick item"
-        }
-      ],
-      "title": "Sequence"
-    },
-    "builtin.table": {
-      "artifact_dependencies": [],
-      "artifact_types": [
-        {
-          "bundle": "table-bundle@1",
-          "exports": [
-            {
-              "content_type": "text/csv; charset=utf-8",
-              "filename": "table.csv",
-              "format": "csv"
-            }
-          ],
-          "key": "table.data@1",
-          "materialized_json_type": null,
-          "projections": [],
-          "references": [],
-          "schema": {
-            "fields": [
-              "columns",
-              "rows"
-            ],
-            "required": [
-              "columns",
-              "rows"
-            ],
-            "sha256": "c065574ee6bb529e861886d0f1f72d43e0e82326e29acd11ccba2d3c0a9e7bbd"
-          },
-          "title": "Table"
-        }
-      ],
-      "capabilities": [
-        "staged.uploads"
-      ],
-      "conversions": [],
-      "nodes": [
-        {
-          "cache_policy": "never",
-          "config": {
-            "fields": [
-              "uploads",
-              "sheet_name",
-              "header_row",
-              "delimiter",
-              "skip_empty_rows"
-            ],
-            "required": [
-              "uploads"
-            ],
-            "sha256": "6067af94da4fcf06d5d1175d796fb5e5ad9931bd4464b3700c21ec70ae3a755a"
-          },
-          "description": "Import a staged CSV or XLSX file as a table artifact.",
-          "input_schema": {
-            "fields": [],
-            "required": [],
-            "sha256": "0a581ef886f1db03762b0c388f9fce8b650d2c2fdd463803903ad47d15a6cdc2"
-          },
-          "inputs": [],
-          "key": "table.file.import@1",
-          "output_schema": {
-            "fields": [
-              "table"
-            ],
-            "required": [
-              "table"
-            ],
-            "sha256": "3a5c58e8414924bb45ff74c487cfad898c8b8b27cceb88e3c4234c9114f49c0e"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "table.data@1",
-              "description": "Table imported from the selected worksheet or CSV file.",
-              "instance_plugs": false,
-              "name": "table",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [
-            "staged.uploads"
-          ],
-          "secret_inputs": [],
-          "staged_upload_inputs": [
-            "uploads"
-          ],
-          "title": "Import table file"
-        },
-        {
-          "cache_policy": "exact",
-          "config": {
-            "fields": [
-              "source_column",
-              "target_column",
-              "target_title",
-              "modernize_historical_cyrillic",
-              "transliterate",
-              "casefold",
-              "remove_diacritics",
-              "punctuation_as_spaces",
-              "collapse_whitespace"
-            ],
-            "required": [
-              "source_column"
-            ],
-            "sha256": "e87b7c15cddd144383b22a10c58d18cc386474cc0670c68787f00b4351a6ca0a"
-          },
-          "description": "Add a configurable normalized-text column to a table.",
-          "input_schema": {
-            "fields": [
-              "table"
-            ],
-            "required": [
-              "table"
-            ],
-            "sha256": "c98584a9cd5dd63fd186c5956d5d187c4cee748c254a047ec9cfab5ede7d7331"
-          },
-          "inputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "table.data@1",
-              "description": "Table containing the source text column.",
-              "instance_plugs": false,
-              "name": "table",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "key": "table.text.normalize@1",
-          "output_schema": {
-            "fields": [
-              "table"
-            ],
-            "required": [
-              "table"
-            ],
-            "sha256": "037c98be595e58c68d8a49a6d22d6daf55d203322b32ad700260472cb3a98881"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "table.data@1",
-              "description": "Input table with one added normalized text column.",
-              "instance_plugs": false,
-              "name": "table",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [],
-          "secret_inputs": [],
-          "staged_upload_inputs": [],
-          "title": "Normalize table text"
-        },
-        {
-          "cache_policy": "exact",
-          "config": {
-            "fields": [
-              "left_text_column",
-              "left_alias_columns",
-              "right_text_column",
-              "right_alias_columns",
-              "left_block_column",
-              "right_block_column",
-              "scorer",
-              "score_threshold",
-              "max_candidates",
-              "include_unmatched",
-              "max_comparisons"
-            ],
-            "required": [
-              "left_text_column",
-              "right_text_column"
-            ],
-            "sha256": "5bafc3000baccf04b9ea0c2d8df8bab470412235e276a6167f6634bcf31fc066"
-          },
-          "description": "Rank fuzzy text matches between rows from two tables.",
-          "input_schema": {
-            "fields": [
-              "left",
-              "right"
-            ],
-            "required": [
-              "left",
-              "right"
-            ],
-            "sha256": "fc2f19a5e6b70c61c166b9c1cef333a5085c17a63859180a5160a1d4a1cbb96e"
-          },
-          "inputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "table.data@1",
-              "description": "Source records to match.",
-              "instance_plugs": false,
-              "name": "left",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            },
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "table.data@1",
-              "description": "Candidate records.",
-              "instance_plugs": false,
-              "name": "right",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "key": "table.fuzzy_match@1",
-          "output_schema": {
-            "fields": [
-              "matches"
-            ],
-            "required": [
-              "matches"
-            ],
-            "sha256": "4cac02dc9ab9eaaa113be9ad3dd65a684d9b998103bc8b10b9f248c3bdd89f09"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "table.data@1",
-              "description": "Ranked candidate pairs with original source columns.",
-              "instance_plugs": false,
-              "name": "matches",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [],
-          "secret_inputs": [],
-          "staged_upload_inputs": [],
-          "title": "Fuzzy match tables"
-        }
-      ],
-      "title": "Table"
-    },
-    "builtin.text": {
-      "artifact_dependencies": [],
-      "artifact_types": [
-        {
-          "bundle": "inline-json@1",
-          "exports": [
-            {
-              "content_type": "text/plain; charset=utf-8",
-              "filename": "text.txt",
-              "format": "txt"
-            }
-          ],
-          "key": "scalar.text@1",
-          "materialized_json_type": "string",
-          "projections": [],
-          "references": [],
-          "schema": {
-            "fields": [
-              "value"
-            ],
-            "required": [
-              "value"
-            ],
-            "sha256": "01a09e0f987d874bf05f4512b09d0980e8c5ddb2330fa659b75e673c4cabcab7"
-          },
-          "title": "Text value"
-        },
-        {
-          "bundle": "inline-json@1",
-          "exports": [
-            {
-              "content_type": "text/plain; charset=utf-8",
-              "filename": "markdown.txt",
-              "format": "txt"
-            }
-          ],
-          "key": "text.markdown@1",
-          "materialized_json_type": null,
-          "projections": [],
-          "references": [],
-          "schema": {
-            "fields": [
-              "markdown"
-            ],
-            "required": [
-              "markdown"
-            ],
-            "sha256": "07c4774d95fa247953043efe03fcb6d245c60d904302d125b466f6351a02cd87"
-          },
-          "title": "Markdown"
-        }
-      ],
-      "capabilities": [],
-      "conversions": [],
-      "nodes": [
-        {
-          "cache_policy": "exact",
-          "config": {
-            "fields": [
-              "text"
-            ],
-            "required": [
-              "text"
-            ],
-            "sha256": "7e1448ff7f34f593707f07fad14d6a253e7d6d3d4e736fbf7802894847b3cfe6"
-          },
-          "description": "Produces one configured multiline text value.",
-          "input_schema": {
-            "fields": [],
-            "required": [],
-            "sha256": "7dce7d8c4409e24a73af55dbcc06003e044f9e10b9dd27ac254d27af557b09a2"
-          },
-          "inputs": [],
-          "key": "text.input@1",
-          "output_schema": {
-            "fields": [
-              "text"
-            ],
-            "required": [
-              "text"
-            ],
-            "sha256": "1a9995752995c22b80376836c7923f782ce1f7ac22339521d8fe1bfa8ae6527b"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "scalar.text@1",
-              "description": "The configured text value.",
-              "instance_plugs": false,
-              "name": "text",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [],
-          "secret_inputs": [],
-          "staged_upload_inputs": [],
-          "title": "Text input"
-        },
-        {
-          "cache_policy": "exact",
-          "config": {
-            "fields": [],
-            "required": [],
-            "sha256": "febba04b0ec95e74aa128b08a6dab81e47e290fd863588187f2bfdea359bafdd"
-          },
-          "description": "Marks text as Markdown without transforming its source.",
-          "input_schema": {
-            "fields": [
-              "text"
-            ],
-            "required": [
-              "text"
-            ],
-            "sha256": "c0834e85fdd85fa71b6be707f4651a497a19c7a498d15b50367364f3e0ee2cb0"
-          },
-          "inputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "scalar.text@1",
-              "description": "Markdown source text to preserve.",
-              "instance_plugs": false,
-              "name": "text",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "key": "text.as_markdown@1",
-          "output_schema": {
-            "fields": [
-              "markdown"
-            ],
-            "required": [
-              "markdown"
-            ],
-            "sha256": "c718ee33a85493acb9a6657ac64feea675ccfe72459c627733e2605f23021bbd"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "text.markdown@1",
-              "description": "The same source text marked as Markdown.",
-              "instance_plugs": false,
-              "name": "markdown",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [],
-          "secret_inputs": [],
-          "staged_upload_inputs": [],
-          "title": "As Markdown"
-        },
-        {
-          "cache_policy": "exact",
-          "config": {
-            "fields": [
-              "separator"
-            ],
-            "required": [
-              "separator"
-            ],
-            "sha256": "41f4d4cfcf18486ee9cee02661b52968b4f493261db92531a0c25ffc49f5d5dc"
-          },
-          "description": "Splits text on an exact separator while preserving empty parts.",
-          "input_schema": {
-            "fields": [
-              "text"
-            ],
-            "required": [
-              "text"
-            ],
-            "sha256": "fd12dad2c63f643c612a368ca5f1ac8f2a3e943a97fee778eacac90e3a3c2543"
-          },
-          "inputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "scalar.text@1",
-              "description": "Text value to split.",
-              "instance_plugs": false,
-              "name": "text",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "key": "text.split@1",
-          "output_schema": {
-            "fields": [
-              "parts"
-            ],
-            "required": [
-              "parts"
-            ],
-            "sha256": "d415fb2ec63ae374be93be11bd11bf7628dc50a0e31601ce1b09921fffa1eae5"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "many"
-              ],
-              "artifact": "scalar.text@1",
-              "description": "Ordered text parts, including empty parts.",
-              "instance_plugs": false,
-              "name": "parts",
-              "required": true,
-              "shape": "many",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [],
-          "secret_inputs": [],
-          "staged_upload_inputs": [],
-          "title": "Split text"
-        },
-        {
-          "cache_policy": "exact",
-          "config": {
-            "fields": [
-              "search",
-              "replacement"
-            ],
-            "required": [
-              "search"
-            ],
-            "sha256": "fc2471cb0d4517f7bc668514b595735a5e7e469bd85818604d616d522dd4a7ae"
-          },
-          "description": "Replaces every exact occurrence of configured search text.",
-          "input_schema": {
-            "fields": [
-              "text"
-            ],
-            "required": [
-              "text"
-            ],
-            "sha256": "d44a4e90bac149a6d8e370efe829ccf6a6ea6926426d7982c8161b45fd0dd782"
-          },
-          "inputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "scalar.text@1",
-              "description": "Text value in which replacements are made.",
-              "instance_plugs": false,
-              "name": "text",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "key": "text.replace@1",
-          "output_schema": {
-            "fields": [
-              "text"
-            ],
-            "required": [
-              "text"
-            ],
-            "sha256": "55ecfadcd99040099def0d2ca01b37d316dd7402ecbefceeb5c283f2a02ee799"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "scalar.text@1",
-              "description": "Text after all exact replacements.",
-              "instance_plugs": false,
-              "name": "text",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [],
-          "secret_inputs": [],
-          "staged_upload_inputs": [],
-          "title": "Replace text"
-        },
-        {
-          "cache_policy": "exact",
-          "config": {
-            "fields": [
-              "separator"
-            ],
-            "required": [],
-            "sha256": "df61b998bd65f26adce84195782119e71e42d2f5b7ee56bc170d51311b0b3a3d"
-          },
-          "description": "Joins an ordered text sequence with a configured separator.",
-          "input_schema": {
-            "fields": [
-              "parts"
-            ],
-            "required": [
-              "parts"
-            ],
-            "sha256": "a8bc94c864ec4f6491781c65fae9fb770ec9e37f327aeb96a41287d518aa7ef4"
-          },
-          "inputs": [
-            {
-              "accepted_shapes": [
-                "many"
-              ],
-              "artifact": "scalar.text@1",
-              "description": "Ordered text values to join.",
-              "instance_plugs": false,
-              "name": "parts",
-              "required": true,
-              "shape": "many",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "key": "text.join@1",
-          "output_schema": {
-            "fields": [
-              "text"
-            ],
-            "required": [
-              "text"
-            ],
-            "sha256": "f140abf12794d7cbc39e318490f1ca1376378a02ccf7366af4b0b35341c51c18"
-          },
-          "outputs": [
-            {
-              "accepted_shapes": [
-                "one"
-              ],
-              "artifact": "scalar.text@1",
-              "description": "The joined text value.",
-              "instance_plugs": false,
-              "name": "text",
-              "required": true,
-              "shape": "one",
-              "title": null,
-              "variadic": false
-            }
-          ],
-          "required_capabilities": [],
-          "secret_inputs": [],
-          "staged_upload_inputs": [],
-          "title": "Join text"
-        }
-      ],
-      "title": "Text"
     },
     "external.gis": {
       "artifact_dependencies": [
@@ -2342,32 +1108,27 @@
       "artifact_dependencies": [
         {
           "bundle": "inline-json@1",
-          "exports": [],
-          "key": "prompt.message@2",
-          "materialized_json_type": null,
-          "projections": [],
-          "references": [
+          "exports": [
             {
-              "path": [
-                "image_refs"
-              ],
-              "shape": "many",
-              "target": "image.raster@1"
+              "content_type": "text/plain; charset=utf-8",
+              "filename": "text.txt",
+              "format": "txt"
             }
           ],
+          "key": "scalar.text@1",
+          "materialized_json_type": "string",
+          "projections": [],
+          "references": [],
           "schema": {
             "fields": [
-              "role",
-              "text",
-              "image_refs"
+              "value"
             ],
             "required": [
-              "role",
-              "text"
+              "value"
             ],
-            "sha256": "0173d8cf8225040b894ac7896f4cbde4bddee71b1b72739bbaabb453097a1775"
+            "sha256": "01a09e0f987d874bf05f4512b09d0980e8c5ddb2330fa659b75e673c4cabcab7"
           },
-          "title": "Prompt message"
+          "title": "Text value"
         },
         {
           "bundle": "binary-file@1",
@@ -2403,6 +1164,35 @@
         }
       ],
       "artifact_types": [
+        {
+          "bundle": "inline-json@1",
+          "exports": [],
+          "key": "prompt.message@2",
+          "materialized_json_type": null,
+          "projections": [],
+          "references": [
+            {
+              "path": [
+                "image_refs"
+              ],
+              "shape": "many",
+              "target": "image.raster@1"
+            }
+          ],
+          "schema": {
+            "fields": [
+              "role",
+              "text",
+              "image_refs"
+            ],
+            "required": [
+              "role",
+              "text"
+            ],
+            "sha256": "0173d8cf8225040b894ac7896f4cbde4bddee71b1b72739bbaabb453097a1775"
+          },
+          "title": "Prompt message"
+        },
         {
           "bundle": "inline-json@1",
           "exports": [],
@@ -2539,6 +1329,84 @@
           ],
           "staged_upload_inputs": [],
           "title": "OpenAI-compatible Chat Completion"
+        },
+        {
+          "cache_policy": "exact",
+          "config": {
+            "fields": [
+              "role"
+            ],
+            "required": [],
+            "sha256": "61ab1998911acdcefac00f2890b3b90190f1b8ed698f6f6966bfd398b46d292f"
+          },
+          "description": "Composes prompt text and optional image references into one message.",
+          "input_schema": {
+            "fields": [
+              "text",
+              "images"
+            ],
+            "required": [
+              "text"
+            ],
+            "sha256": "ec7a1623003bb22f8d74ffb27075d265ace3f8583817a931bbb41b393b0a8213"
+          },
+          "inputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "scalar.text@1",
+              "description": "Text content of the prompt message.",
+              "instance_plugs": false,
+              "name": "text",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            },
+            {
+              "accepted_shapes": [
+                "many"
+              ],
+              "artifact": "image.raster@1",
+              "description": "Optional ordered image artifacts for a user message.",
+              "instance_plugs": false,
+              "name": "images",
+              "required": false,
+              "shape": "many",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "key": "prompt.message.create@2",
+          "output_schema": {
+            "fields": [
+              "message"
+            ],
+            "required": [
+              "message"
+            ],
+            "sha256": "9eb549824baa8d68c894442f16e6cf8ab53cbfc6c520dae713a2bdb74baa127c"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "prompt.message@2",
+              "description": "The composed prompt message.",
+              "instance_plugs": false,
+              "name": "message",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [],
+          "secret_inputs": [],
+          "staged_upload_inputs": [],
+          "title": "Create prompt message"
         }
       ],
       "title": "LLM"
@@ -2959,6 +1827,1084 @@
         }
       ],
       "title": "SQL"
+    },
+    "image": {
+      "artifact_dependencies": [],
+      "artifact_types": [
+        {
+          "bundle": "binary-file@1",
+          "exports": [],
+          "key": "image.raster@1",
+          "materialized_json_type": null,
+          "projections": [],
+          "references": [],
+          "schema": {
+            "fields": [],
+            "required": [],
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          },
+          "title": "Raster image"
+        }
+      ],
+      "capabilities": [
+        "staged.uploads"
+      ],
+      "conversions": [],
+      "nodes": [
+        {
+          "cache_policy": "never",
+          "config": {
+            "fields": [
+              "uploads"
+            ],
+            "required": [
+              "uploads"
+            ],
+            "sha256": "9b1f32403866b458b4883c45214acbdbb9abd1c1ef737402e6b69b3f3926c02b"
+          },
+          "description": "Imports staged image uploads as an ordered raster image sequence.",
+          "input_schema": {
+            "fields": [],
+            "required": [],
+            "sha256": "e9002b1234b67a1965e4d656722325a6ff84181b2a200ec8fcbd598f6bfd481f"
+          },
+          "inputs": [],
+          "key": "image.upload@1",
+          "output_schema": {
+            "fields": [
+              "images"
+            ],
+            "required": [
+              "images"
+            ],
+            "sha256": "c88a81782580469189838adbb4a6154b58c4c33617b68cb876f7b2fb02f82196"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "many"
+              ],
+              "artifact": "image.raster@1",
+              "description": "Ordered raster images imported from staged uploads.",
+              "instance_plugs": false,
+              "name": "images",
+              "required": true,
+              "shape": "many",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [
+            "staged.uploads"
+          ],
+          "secret_inputs": [],
+          "staged_upload_inputs": [
+            "uploads"
+          ],
+          "title": "Upload images"
+        }
+      ],
+      "title": "Image"
+    },
+    "schema": {
+      "artifact_dependencies": [],
+      "artifact_types": [
+        {
+          "bundle": "inline-json@1",
+          "exports": [],
+          "key": "json.schema@1",
+          "materialized_json_type": null,
+          "projections": [],
+          "references": [],
+          "schema": {
+            "fields": [
+              "value"
+            ],
+            "required": [
+              "value"
+            ],
+            "sha256": "a87e5da78277e882134429ee13975ca6626389ab9791133d63de003daf9aae44"
+          },
+          "title": "JSON Schema"
+        }
+      ],
+      "capabilities": [],
+      "conversions": [],
+      "nodes": [
+        {
+          "cache_policy": "exact",
+          "config": {
+            "fields": [
+              "title",
+              "description",
+              "additional_properties",
+              "fields"
+            ],
+            "required": [],
+            "sha256": "4046c8894b78b3af1bb20e0a06f379d86042d34831f6a5a296ebf784467b8caa"
+          },
+          "description": "Builds one object JSON Schema with optional connected child schemas.",
+          "input_schema": {
+            "fields": [
+              "schemas"
+            ],
+            "required": [],
+            "sha256": "7288170d0955ad54b41b8ee39929301792f0c60d34b8c80e09d65f311a2f97a5"
+          },
+          "inputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "json.schema@1",
+              "description": "Connected child schemas in the order of schema-consuming fields.",
+              "instance_plugs": true,
+              "name": "schemas",
+              "required": false,
+              "shape": "one",
+              "title": null,
+              "variadic": true
+            }
+          ],
+          "key": "schema.builder@1",
+          "output_schema": {
+            "fields": [
+              "json_schema"
+            ],
+            "required": [
+              "json_schema"
+            ],
+            "sha256": "4f3f2d73a66bff2ad7da0d395618265aa396467574a8eda7b5f1a3120f2c8892"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "json.schema@1",
+              "description": "Canonical Draft 2020-12 object JSON Schema text.",
+              "instance_plugs": false,
+              "name": "json_schema",
+              "required": true,
+              "shape": "one",
+              "title": "JSON Schema",
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [],
+          "secret_inputs": [],
+          "staged_upload_inputs": [],
+          "title": "Schema Builder"
+        }
+      ],
+      "title": "Schema"
+    },
+    "sequence": {
+      "artifact_dependencies": [
+        {
+          "bundle": "inline-json@1",
+          "exports": [],
+          "key": "scalar.integer@1",
+          "materialized_json_type": "integer",
+          "projections": [],
+          "references": [],
+          "schema": {
+            "fields": [
+              "value"
+            ],
+            "required": [
+              "value"
+            ],
+            "sha256": "13dd5c9edb1aae47e4bae5d6f924e7600b5aa7d29dd9fb573bee7c75f683a4af"
+          },
+          "title": "Integer value"
+        }
+      ],
+      "artifact_types": [],
+      "capabilities": [],
+      "conversions": [],
+      "nodes": [
+        {
+          "cache_policy": "exact",
+          "config": {
+            "fields": [],
+            "required": [],
+            "sha256": "febba04b0ec95e74aa128b08a6dab81e47e290fd863588187f2bfdea359bafdd"
+          },
+          "description": "Collects homogeneous artifact refs without rewriting their payloads.",
+          "input_schema": {
+            "fields": [
+              "items"
+            ],
+            "required": [
+              "items"
+            ],
+            "sha256": "cc3d6b336d7afb034146fb8aad32258039f8003ddf93d22ac8c8db1e77375fd6"
+          },
+          "inputs": [
+            {
+              "accepted_shapes": [
+                "one",
+                "many"
+              ],
+              "artifact": "$T",
+              "description": "Artifacts and sequences in connection order.",
+              "instance_plugs": true,
+              "name": "items",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": true
+            }
+          ],
+          "key": "sequence.collect@1",
+          "output_schema": {
+            "fields": [
+              "items"
+            ],
+            "required": [
+              "items"
+            ],
+            "sha256": "fc04f193aaf0566c925671d5f6186d5633279898ece3160bbee73be48ef0c435"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "many"
+              ],
+              "artifact": "$T",
+              "description": "One sequence containing every input artifact.",
+              "instance_plugs": false,
+              "name": "items",
+              "required": true,
+              "shape": "many",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [],
+          "secret_inputs": [],
+          "staged_upload_inputs": [],
+          "title": "Collect"
+        },
+        {
+          "cache_policy": "exact",
+          "config": {
+            "fields": [],
+            "required": [],
+            "sha256": "febba04b0ec95e74aa128b08a6dab81e47e290fd863588187f2bfdea359bafdd"
+          },
+          "description": "Counts the refs in an artifact sequence.",
+          "input_schema": {
+            "fields": [
+              "items"
+            ],
+            "required": [
+              "items"
+            ],
+            "sha256": "0cd9fda3c3c3c1c547219515213ebce125082bc38001c5f7c59d6f701399663d"
+          },
+          "inputs": [
+            {
+              "accepted_shapes": [
+                "many"
+              ],
+              "artifact": "$T",
+              "description": "Sequence whose items are counted.",
+              "instance_plugs": false,
+              "name": "items",
+              "required": true,
+              "shape": "many",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "key": "sequence.count@1",
+          "output_schema": {
+            "fields": [
+              "count"
+            ],
+            "required": [
+              "count"
+            ],
+            "sha256": "b52376db4d0bc3e07c4bc85429fa35a8d2e9e672139b59af2b7e530e10de8e4e"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "scalar.integer@1",
+              "description": "Number of items in the sequence.",
+              "instance_plugs": false,
+              "name": "count",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [],
+          "secret_inputs": [],
+          "staged_upload_inputs": [],
+          "title": "Count"
+        },
+        {
+          "cache_policy": "exact",
+          "config": {
+            "fields": [
+              "start",
+              "count"
+            ],
+            "required": [],
+            "sha256": "5b0ed7af464aeba9354ef77a5d5e09ff047ef3dc58c2a368cc761816847edee1"
+          },
+          "description": "Selects a contiguous range from an ordered artifact sequence.",
+          "input_schema": {
+            "fields": [
+              "items"
+            ],
+            "required": [
+              "items"
+            ],
+            "sha256": "3a60fdeef29972e1015261d4b3d5b04a95c187a4375fb42fd57a3e7bc6fd8a75"
+          },
+          "inputs": [
+            {
+              "accepted_shapes": [
+                "many"
+              ],
+              "artifact": "$T",
+              "description": "Ordered sequence to slice.",
+              "instance_plugs": false,
+              "name": "items",
+              "required": true,
+              "shape": "many",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "key": "sequence.slice@1",
+          "output_schema": {
+            "fields": [
+              "items"
+            ],
+            "required": [
+              "items"
+            ],
+            "sha256": "47e5151163314891cc8f3e6009b724665cc01deca0da3456653f0c70dddd1045"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "many"
+              ],
+              "artifact": "$T",
+              "description": "Selected contiguous items.",
+              "instance_plugs": false,
+              "name": "items",
+              "required": true,
+              "shape": "many",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [],
+          "secret_inputs": [],
+          "staged_upload_inputs": [],
+          "title": "Slice"
+        },
+        {
+          "cache_policy": "exact",
+          "config": {
+            "fields": [
+              "index"
+            ],
+            "required": [],
+            "sha256": "29ed0b983a1e77c068e8a31f6cabf1c92babbf744aa1b5407961d0f0311577fa"
+          },
+          "description": "Picks one artifact ref from an ordered artifact sequence.",
+          "input_schema": {
+            "fields": [
+              "items"
+            ],
+            "required": [
+              "items"
+            ],
+            "sha256": "2862e7c8807dc8676d981aa5e6d6e672110c4681a98a590fc6db14cfb8640089"
+          },
+          "inputs": [
+            {
+              "accepted_shapes": [
+                "many"
+              ],
+              "artifact": "$T",
+              "description": "Ordered sequence containing the item.",
+              "instance_plugs": false,
+              "name": "items",
+              "required": true,
+              "shape": "many",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "key": "sequence.item_at@1",
+          "output_schema": {
+            "fields": [
+              "item"
+            ],
+            "required": [
+              "item"
+            ],
+            "sha256": "19484b08b95054922682b9d2284cfee68e3f3aba6f50348651a104a241836120"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "$T",
+              "description": "Artifact ref at the configured index.",
+              "instance_plugs": false,
+              "name": "item",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [],
+          "secret_inputs": [],
+          "staged_upload_inputs": [],
+          "title": "Pick item"
+        }
+      ],
+      "title": "Sequence"
+    },
+    "table": {
+      "artifact_dependencies": [],
+      "artifact_types": [
+        {
+          "bundle": "table-bundle@1",
+          "exports": [
+            {
+              "content_type": "text/csv; charset=utf-8",
+              "filename": "table.csv",
+              "format": "csv"
+            }
+          ],
+          "key": "table.data@1",
+          "materialized_json_type": null,
+          "projections": [],
+          "references": [],
+          "schema": {
+            "fields": [
+              "columns",
+              "rows"
+            ],
+            "required": [
+              "columns",
+              "rows"
+            ],
+            "sha256": "c065574ee6bb529e861886d0f1f72d43e0e82326e29acd11ccba2d3c0a9e7bbd"
+          },
+          "title": "Table"
+        }
+      ],
+      "capabilities": [
+        "staged.uploads"
+      ],
+      "conversions": [],
+      "nodes": [
+        {
+          "cache_policy": "never",
+          "config": {
+            "fields": [
+              "uploads",
+              "sheet_name",
+              "header_row",
+              "delimiter",
+              "skip_empty_rows"
+            ],
+            "required": [
+              "uploads"
+            ],
+            "sha256": "6067af94da4fcf06d5d1175d796fb5e5ad9931bd4464b3700c21ec70ae3a755a"
+          },
+          "description": "Import a staged CSV or XLSX file as a table artifact.",
+          "input_schema": {
+            "fields": [],
+            "required": [],
+            "sha256": "0a581ef886f1db03762b0c388f9fce8b650d2c2fdd463803903ad47d15a6cdc2"
+          },
+          "inputs": [],
+          "key": "table.file.import@1",
+          "output_schema": {
+            "fields": [
+              "table"
+            ],
+            "required": [
+              "table"
+            ],
+            "sha256": "3a5c58e8414924bb45ff74c487cfad898c8b8b27cceb88e3c4234c9114f49c0e"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "table.data@1",
+              "description": "Table imported from the selected worksheet or CSV file.",
+              "instance_plugs": false,
+              "name": "table",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [
+            "staged.uploads"
+          ],
+          "secret_inputs": [],
+          "staged_upload_inputs": [
+            "uploads"
+          ],
+          "title": "Import table file"
+        },
+        {
+          "cache_policy": "exact",
+          "config": {
+            "fields": [
+              "source_column",
+              "target_column",
+              "target_title",
+              "modernize_historical_cyrillic",
+              "transliterate",
+              "casefold",
+              "remove_diacritics",
+              "punctuation_as_spaces",
+              "collapse_whitespace"
+            ],
+            "required": [
+              "source_column"
+            ],
+            "sha256": "e87b7c15cddd144383b22a10c58d18cc386474cc0670c68787f00b4351a6ca0a"
+          },
+          "description": "Add a configurable normalized-text column to a table.",
+          "input_schema": {
+            "fields": [
+              "table"
+            ],
+            "required": [
+              "table"
+            ],
+            "sha256": "c98584a9cd5dd63fd186c5956d5d187c4cee748c254a047ec9cfab5ede7d7331"
+          },
+          "inputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "table.data@1",
+              "description": "Table containing the source text column.",
+              "instance_plugs": false,
+              "name": "table",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "key": "table.text.normalize@1",
+          "output_schema": {
+            "fields": [
+              "table"
+            ],
+            "required": [
+              "table"
+            ],
+            "sha256": "037c98be595e58c68d8a49a6d22d6daf55d203322b32ad700260472cb3a98881"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "table.data@1",
+              "description": "Input table with one added normalized text column.",
+              "instance_plugs": false,
+              "name": "table",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [],
+          "secret_inputs": [],
+          "staged_upload_inputs": [],
+          "title": "Normalize table text"
+        },
+        {
+          "cache_policy": "exact",
+          "config": {
+            "fields": [
+              "left_text_column",
+              "left_alias_columns",
+              "right_text_column",
+              "right_alias_columns",
+              "left_block_column",
+              "right_block_column",
+              "scorer",
+              "score_threshold",
+              "max_candidates",
+              "include_unmatched",
+              "max_comparisons"
+            ],
+            "required": [
+              "left_text_column",
+              "right_text_column"
+            ],
+            "sha256": "5bafc3000baccf04b9ea0c2d8df8bab470412235e276a6167f6634bcf31fc066"
+          },
+          "description": "Rank fuzzy text matches between rows from two tables.",
+          "input_schema": {
+            "fields": [
+              "left",
+              "right"
+            ],
+            "required": [
+              "left",
+              "right"
+            ],
+            "sha256": "fc2f19a5e6b70c61c166b9c1cef333a5085c17a63859180a5160a1d4a1cbb96e"
+          },
+          "inputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "table.data@1",
+              "description": "Source records to match.",
+              "instance_plugs": false,
+              "name": "left",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            },
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "table.data@1",
+              "description": "Candidate records.",
+              "instance_plugs": false,
+              "name": "right",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "key": "table.fuzzy_match@1",
+          "output_schema": {
+            "fields": [
+              "matches"
+            ],
+            "required": [
+              "matches"
+            ],
+            "sha256": "4cac02dc9ab9eaaa113be9ad3dd65a684d9b998103bc8b10b9f248c3bdd89f09"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "table.data@1",
+              "description": "Ranked candidate pairs with original source columns.",
+              "instance_plugs": false,
+              "name": "matches",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [],
+          "secret_inputs": [],
+          "staged_upload_inputs": [],
+          "title": "Fuzzy match tables"
+        }
+      ],
+      "title": "Table"
+    },
+    "text": {
+      "artifact_dependencies": [],
+      "artifact_types": [
+        {
+          "bundle": "inline-json@1",
+          "exports": [
+            {
+              "content_type": "text/plain; charset=utf-8",
+              "filename": "text.txt",
+              "format": "txt"
+            }
+          ],
+          "key": "scalar.text@1",
+          "materialized_json_type": "string",
+          "projections": [],
+          "references": [],
+          "schema": {
+            "fields": [
+              "value"
+            ],
+            "required": [
+              "value"
+            ],
+            "sha256": "01a09e0f987d874bf05f4512b09d0980e8c5ddb2330fa659b75e673c4cabcab7"
+          },
+          "title": "Text value"
+        },
+        {
+          "bundle": "inline-json@1",
+          "exports": [
+            {
+              "content_type": "text/plain; charset=utf-8",
+              "filename": "markdown.txt",
+              "format": "txt"
+            }
+          ],
+          "key": "text.markdown@1",
+          "materialized_json_type": null,
+          "projections": [],
+          "references": [],
+          "schema": {
+            "fields": [
+              "markdown"
+            ],
+            "required": [
+              "markdown"
+            ],
+            "sha256": "07c4774d95fa247953043efe03fcb6d245c60d904302d125b466f6351a02cd87"
+          },
+          "title": "Markdown"
+        }
+      ],
+      "capabilities": [],
+      "conversions": [],
+      "nodes": [
+        {
+          "cache_policy": "exact",
+          "config": {
+            "fields": [
+              "text"
+            ],
+            "required": [
+              "text"
+            ],
+            "sha256": "7e1448ff7f34f593707f07fad14d6a253e7d6d3d4e736fbf7802894847b3cfe6"
+          },
+          "description": "Produces one configured multiline text value.",
+          "input_schema": {
+            "fields": [],
+            "required": [],
+            "sha256": "7dce7d8c4409e24a73af55dbcc06003e044f9e10b9dd27ac254d27af557b09a2"
+          },
+          "inputs": [],
+          "key": "text.input@1",
+          "output_schema": {
+            "fields": [
+              "text"
+            ],
+            "required": [
+              "text"
+            ],
+            "sha256": "1a9995752995c22b80376836c7923f782ce1f7ac22339521d8fe1bfa8ae6527b"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "scalar.text@1",
+              "description": "The configured text value.",
+              "instance_plugs": false,
+              "name": "text",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [],
+          "secret_inputs": [],
+          "staged_upload_inputs": [],
+          "title": "Text input"
+        },
+        {
+          "cache_policy": "exact",
+          "config": {
+            "fields": [],
+            "required": [],
+            "sha256": "febba04b0ec95e74aa128b08a6dab81e47e290fd863588187f2bfdea359bafdd"
+          },
+          "description": "Marks text as Markdown without transforming its source.",
+          "input_schema": {
+            "fields": [
+              "text"
+            ],
+            "required": [
+              "text"
+            ],
+            "sha256": "c0834e85fdd85fa71b6be707f4651a497a19c7a498d15b50367364f3e0ee2cb0"
+          },
+          "inputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "scalar.text@1",
+              "description": "Markdown source text to preserve.",
+              "instance_plugs": false,
+              "name": "text",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "key": "text.as_markdown@1",
+          "output_schema": {
+            "fields": [
+              "markdown"
+            ],
+            "required": [
+              "markdown"
+            ],
+            "sha256": "c718ee33a85493acb9a6657ac64feea675ccfe72459c627733e2605f23021bbd"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "text.markdown@1",
+              "description": "The same source text marked as Markdown.",
+              "instance_plugs": false,
+              "name": "markdown",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [],
+          "secret_inputs": [],
+          "staged_upload_inputs": [],
+          "title": "As Markdown"
+        },
+        {
+          "cache_policy": "exact",
+          "config": {
+            "fields": [
+              "separator"
+            ],
+            "required": [
+              "separator"
+            ],
+            "sha256": "41f4d4cfcf18486ee9cee02661b52968b4f493261db92531a0c25ffc49f5d5dc"
+          },
+          "description": "Splits text on an exact separator while preserving empty parts.",
+          "input_schema": {
+            "fields": [
+              "text"
+            ],
+            "required": [
+              "text"
+            ],
+            "sha256": "fd12dad2c63f643c612a368ca5f1ac8f2a3e943a97fee778eacac90e3a3c2543"
+          },
+          "inputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "scalar.text@1",
+              "description": "Text value to split.",
+              "instance_plugs": false,
+              "name": "text",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "key": "text.split@1",
+          "output_schema": {
+            "fields": [
+              "parts"
+            ],
+            "required": [
+              "parts"
+            ],
+            "sha256": "d415fb2ec63ae374be93be11bd11bf7628dc50a0e31601ce1b09921fffa1eae5"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "many"
+              ],
+              "artifact": "scalar.text@1",
+              "description": "Ordered text parts, including empty parts.",
+              "instance_plugs": false,
+              "name": "parts",
+              "required": true,
+              "shape": "many",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [],
+          "secret_inputs": [],
+          "staged_upload_inputs": [],
+          "title": "Split text"
+        },
+        {
+          "cache_policy": "exact",
+          "config": {
+            "fields": [
+              "search",
+              "replacement"
+            ],
+            "required": [
+              "search"
+            ],
+            "sha256": "fc2471cb0d4517f7bc668514b595735a5e7e469bd85818604d616d522dd4a7ae"
+          },
+          "description": "Replaces every exact occurrence of configured search text.",
+          "input_schema": {
+            "fields": [
+              "text"
+            ],
+            "required": [
+              "text"
+            ],
+            "sha256": "d44a4e90bac149a6d8e370efe829ccf6a6ea6926426d7982c8161b45fd0dd782"
+          },
+          "inputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "scalar.text@1",
+              "description": "Text value in which replacements are made.",
+              "instance_plugs": false,
+              "name": "text",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "key": "text.replace@1",
+          "output_schema": {
+            "fields": [
+              "text"
+            ],
+            "required": [
+              "text"
+            ],
+            "sha256": "55ecfadcd99040099def0d2ca01b37d316dd7402ecbefceeb5c283f2a02ee799"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "scalar.text@1",
+              "description": "Text after all exact replacements.",
+              "instance_plugs": false,
+              "name": "text",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [],
+          "secret_inputs": [],
+          "staged_upload_inputs": [],
+          "title": "Replace text"
+        },
+        {
+          "cache_policy": "exact",
+          "config": {
+            "fields": [
+              "separator"
+            ],
+            "required": [],
+            "sha256": "df61b998bd65f26adce84195782119e71e42d2f5b7ee56bc170d51311b0b3a3d"
+          },
+          "description": "Joins an ordered text sequence with a configured separator.",
+          "input_schema": {
+            "fields": [
+              "parts"
+            ],
+            "required": [
+              "parts"
+            ],
+            "sha256": "a8bc94c864ec4f6491781c65fae9fb770ec9e37f327aeb96a41287d518aa7ef4"
+          },
+          "inputs": [
+            {
+              "accepted_shapes": [
+                "many"
+              ],
+              "artifact": "scalar.text@1",
+              "description": "Ordered text values to join.",
+              "instance_plugs": false,
+              "name": "parts",
+              "required": true,
+              "shape": "many",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "key": "text.join@1",
+          "output_schema": {
+            "fields": [
+              "text"
+            ],
+            "required": [
+              "text"
+            ],
+            "sha256": "f140abf12794d7cbc39e318490f1ca1376378a02ccf7366af4b0b35341c51c18"
+          },
+          "outputs": [
+            {
+              "accepted_shapes": [
+                "one"
+              ],
+              "artifact": "scalar.text@1",
+              "description": "The joined text value.",
+              "instance_plugs": false,
+              "name": "text",
+              "required": true,
+              "shape": "one",
+              "title": null,
+              "variadic": false
+            }
+          ],
+          "required_capabilities": [],
+          "secret_inputs": [],
+          "staged_upload_inputs": [],
+          "title": "Join text"
+        }
+      ],
+      "title": "Text"
     }
   },
   "schema_version": 1

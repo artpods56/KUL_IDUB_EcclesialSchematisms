@@ -21,7 +21,6 @@ from grafy_core.domain.plugin_releases import (
     PluginArtifactTypeKey,
     PluginCapabilityManifest,
     PluginCatalogManifest,
-    PluginDistribution,
     PluginExecutionPolicy,
     PlatformPluginActor,
     PluginNodeContract,
@@ -110,7 +109,6 @@ def _release(
             if is_system
             else PluginExecutionPolicy.ISOLATED_ONLY
         ),
-        distribution=PluginDistribution.BUNDLED if is_system else None,
         installed_by_user_id=None if is_system else PUBLISHER_USER_ID,
         installed_by_platform_actor="test:catalog" if is_system else None,
     )
@@ -331,7 +329,6 @@ async def test_workspace_publication_cannot_reuse_retained_system_identities(
                 config_digest="4" * 64,
             ),
             execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-            distribution=PluginDistribution.BUNDLED,
             platform_actor=PLATFORM_ACTOR,
             loader_target="grafy_plugin:PLUGIN",
         )
@@ -432,7 +429,6 @@ async def test_system_publication_cannot_reuse_retained_workspace_identities(
                     config_digest="5" * 64,
                 ),
                 execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-                distribution=PluginDistribution.BUNDLED,
                 platform_actor=PLATFORM_ACTOR,
                 loader_target="grafy_plugin:PLUGIN",
             )
@@ -520,7 +516,6 @@ async def test_historical_workspace_revision_identity_still_blocks_system_public
                     config_digest="6" * 64,
                 ),
                 execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-                distribution=PluginDistribution.BUNDLED,
                 platform_actor=PLATFORM_ACTOR,
                 loader_target="grafy_plugin:PLUGIN",
             )
@@ -560,7 +555,6 @@ async def test_non_colliding_cross_scope_publications_succeed(
                 config_digest="4" * 64,
             ),
             execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-            distribution=PluginDistribution.BUNDLED,
             platform_actor=PLATFORM_ACTOR,
             loader_target="grafy_plugin:PLUGIN",
         )

@@ -61,6 +61,7 @@ def _node(
     config: dict[str, object] | None = None,
 ) -> SavedGraphNode:
     return SavedGraphNode(
+        kind="builtin",
         id=node_id,
         operator_id="example.operator",
         operator_version=1,
@@ -111,6 +112,7 @@ def test_rename_field_conflict() -> None:
 def test_move_remove_update_edge_and_plugs() -> None:
     source = _node("source", x=1, y=2)
     target = SavedGraphNode(
+        kind="builtin",
         id="target",
         operator_id="example.operator",
         operator_version=1,
@@ -255,6 +257,7 @@ def test_update_node_plugin_release_is_a_single_node_cas() -> None:
         revision=2,
     )
     target = SavedGraphNode(
+        kind="builtin",
         id="target",
         operator_id="notes.write",
         operator_version=1,
@@ -479,6 +482,7 @@ def test_add_edge_and_sanitize_copy_document() -> None:
     module_document = SavedGraphDocument(
         nodes=(
             SavedGraphNode(
+                kind="builtin",
                 id="mod",
                 operator_id="graph.module." + str(uuid4()),
                 operator_version=1,
@@ -576,6 +580,7 @@ def test_existing_graph_head_starts_at_sequence_zero() -> None:
 
 def test_schema_builder_compound_updates_config_plugs_and_drops_orphan_edges() -> None:
     builder = SavedGraphNode(
+        kind="builtin",
         id="builder",
         operator_id="schema.builder",
         operator_version=1,
@@ -642,6 +647,7 @@ def test_schema_builder_compound_updates_config_plugs_and_drops_orphan_edges() -
 
 def test_schema_builder_compound_rejects_partial_field_conflict() -> None:
     builder = SavedGraphNode(
+        kind="builtin",
         id="builder",
         operator_id="schema.builder",
         operator_version=1,

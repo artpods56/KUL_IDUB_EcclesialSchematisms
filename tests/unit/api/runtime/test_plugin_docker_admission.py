@@ -207,7 +207,6 @@ def _unsupported_release() -> InstalledPluginRelease:
                 workspace_id=WORKSPACE_ID,
             ),
             execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
-            distribution=None,
             installed_by_user_id=WORKSPACE_ID,
             installed_by_platform_actor=None,
         ),

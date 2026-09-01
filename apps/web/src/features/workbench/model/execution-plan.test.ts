@@ -54,6 +54,7 @@ function nodeSpec(
     operator_id: operatorId,
     operator_version: 1,
     plugin_slug: "test",
+    origin: "builtin",
     title,
     description: title,
     catalog_visible: true,
@@ -80,6 +81,7 @@ function unsupportedCompatibility(
     outputs: [{ portName: "result" }],
     persistedNode: {
       id: nodeId,
+      kind: "builtin",
       operator_id: operatorId,
       operator_version: 1,
       config: {},

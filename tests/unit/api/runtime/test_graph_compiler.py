@@ -28,6 +28,7 @@ from grafy_api.v1.routes.executions.models import (
     RunRequest,
 )
 from tests.support.system_plugins import (
+    TEST_BUILD_DIGEST,
     TEST_SYSTEM_PLUGINS,
     build_explicit_plugin_registry,
     build_selected_system_plugin_deployment,
@@ -107,6 +108,7 @@ def _compiler(
             runtime_profile=None,
             system_host_bindings=SYSTEM_DEPLOYMENT.host_bindings,
         ),
+        build_digest=TEST_BUILD_DIGEST,
     )
 
 
@@ -123,12 +125,14 @@ async def test_compiler_orders_nodes_and_resolves_declared_conversions(
     request = RunRequest(
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="replace",
                 operator_id="text.replace",
                 operator_version=1,
                 config={"search": "1", "replacement": "one"},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="number",
                 operator_id="arithmetic.number",
                 operator_version=1,
@@ -181,12 +185,14 @@ async def test_compiler_does_not_resolve_mutable_plugin_registry_conversions(
     request = RunRequest(
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="number",
                 operator_id="arithmetic.number",
                 operator_version=1,
                 config={"value": 12},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="replace",
                 operator_id="text.replace",
                 operator_version=1,
@@ -224,18 +230,21 @@ async def test_compiler_derives_map_invocation_from_the_incoming_edge(
     request = RunRequest(
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="replace",
                 operator_id="text.replace",
                 operator_version=1,
                 config={"search": "a", "replacement": "A"},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="split",
                 operator_id="text.split",
                 operator_version=1,
                 config={"separator": "|"},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="source",
                 operator_id="text.input",
                 operator_version=1,
@@ -282,6 +291,7 @@ async def test_compiler_accepts_an_external_edge_only_with_its_exact_pin(
     request = RunRequest(
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="replace",
                 operator_id="text.replace",
                 operator_version=1,
@@ -317,6 +327,7 @@ async def test_compiler_accepts_an_external_edge_only_with_its_exact_pin(
 
 def _node(node_id: str) -> RunNodeRequest:
     return RunNodeRequest(
+        kind="builtin",
         id=node_id,
         operator_id="text.input",
         operator_version=1,

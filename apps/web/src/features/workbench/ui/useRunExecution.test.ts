@@ -51,9 +51,10 @@ const executionId = "00000000-0000-4000-8000-000000000001";
 const executionDraft: CreateSavedGraphRequest = {
   name: "Execution snapshot",
   document: {
-    schema_version: 5,
+    schema_version: 6,
     nodes: [{
       id: "node-1",
+      kind: "builtin",
       operator_id: "test.operator",
       operator_version: 1,
       config: {},
@@ -104,6 +105,7 @@ function nodeSpec(): NodeSpec {
     operator_id: "test.operator",
     operator_version: 1,
     plugin_slug: "test",
+    origin: "builtin",
     title: "Test operator",
     description: "Test operator",
     catalog_visible: true,
@@ -844,6 +846,7 @@ describe("useRunExecution", () => {
       outputs: [],
       persistedNode: {
         id: "node-1",
+        kind: "builtin",
         operator_id: "test.operator",
         operator_version: 1,
         config: {},

@@ -9,11 +9,11 @@ from pydantic import BaseModel
 
 from grafy_core.artifacts import ArtifactRef, ArtifactRefSequence, ArtifactTypeKey
 from grafy_core.domain.invocation_cache import InvocationCacheEntry
-from grafy_core.domain.plugin_releases import PluginReleaseIdentity
+from grafy_core.domain.implementation import ImplementationIdentity
 from grafy_core.nodes import Node, NodeExecutionContext
 
 
-INVOCATION_CACHE_FINGERPRINT_VERSION = 3
+INVOCATION_CACHE_FINGERPRINT_VERSION = 4
 
 
 class InvocationCachePort(Protocol):
@@ -69,7 +69,7 @@ def invocation_cache_key(
     config: BaseModel,
     artifact_type_bindings: Mapping[str, ArtifactTypeKey],
     opaque_secret_revisions: Mapping[str, str],
-    plugin_release: PluginReleaseIdentity | None = None,
+    implementation: ImplementationIdentity | None = None,
 ) -> str | None:
     """Return the versioned exact-invocation SHA-256, or None when unsafe."""
 
@@ -120,10 +120,10 @@ def invocation_cache_key(
             "artifact_type_bindings": canonical_bindings,
             "inputs": canonical_inputs,
             "opaque_secret_revisions": canonical_secret_revisions,
-            "plugin_release": (
+            "implementation": (
                 None
-                if plugin_release is None
-                else plugin_release.fingerprint_document()
+                if implementation is None
+                else implementation.fingerprint_document()
             ),
         }
         payload = json.dumps(

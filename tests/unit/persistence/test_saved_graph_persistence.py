@@ -76,6 +76,7 @@ def _document(label: str = "draft") -> SavedGraphDocument:
     return SavedGraphDocument(
         nodes=(
             SavedGraphNode(
+                kind="builtin",
                 id="source",
                 operator_id="text.source",
                 operator_version=1,
@@ -83,6 +84,7 @@ def _document(label: str = "draft") -> SavedGraphDocument:
                 position=GraphPoint(x=12.5, y=24.75),
             ),
             SavedGraphNode(
+                kind="builtin",
                 id="target",
                 operator_id="text.target",
                 operator_version=2,

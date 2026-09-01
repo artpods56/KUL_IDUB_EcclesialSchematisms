@@ -108,7 +108,7 @@ from grafy_core.runtime.table_bundle import (
     write_table_bundle,
 )
 from grafy_storage import LocalFileObjectStore
-from grafy_plugin_table.persistence import TableArtifactResolver, TableArtifactWriter
+from grafy_workbench.table.persistence import TableArtifactResolver, TableArtifactWriter
 
 from grafy_api.v1.routes.executions.runtime.plugin_artifacts import (
     ArtifactBundlePluginInvoker,
@@ -193,7 +193,6 @@ def _installed_workspace_release(release: PluginRelease) -> InstalledPluginRelea
                 workspace_id=WORKSPACE_ID,
             ),
             execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
-            distribution=None,
             installed_by_user_id=WORKSPACE_ID,
             installed_by_platform_actor=None,
         ),

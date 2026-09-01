@@ -57,6 +57,7 @@ function node(
     inputs,
     outputs,
     catalog_visible: true,
+    origin: pluginSlug === "graph.module" ? "module" : pluginSlug === "builtin" ? "builtin" : "plugin",
     plugin_revision: null,
     runnable: true,
     ...overrides,
@@ -101,16 +102,14 @@ function registry(): NodeRegistry {
       {
         slug: "builtin",
         title: "Built-in",
+        origin: "builtin",
         entry_kind: "plugin",
-        scope: "system",
-        distribution: "bundled",
-        revision: 1,
-        plugin_release: { scope: "system", slug: "builtin", revision: 1 },
         runnable: true,
       },
       {
         slug: "graph.module",
         title: "Workspace library",
+        origin: "module",
         entry_kind: "module",
         revision: null,
         runnable: true,
@@ -118,9 +117,9 @@ function registry(): NodeRegistry {
       {
         slug: "external.ocr",
         title: "OCR",
+        origin: "plugin",
         entry_kind: "plugin",
         scope: "system",
-        distribution: "optional",
         revision: 1,
         plugin_release: {
           scope: "system",
@@ -474,8 +473,8 @@ describe("NodeSelector", () => {
     });
 
     expect(options().map((option) => option.textContent)).toEqual([
-      expect.stringContaining("Normalize invoices"),
       expect.stringContaining("Replace text"),
+      expect.stringContaining("Normalize invoices"),
     ]);
     expect(dialog().textContent).toContain(
       "Showing nodes that can connect from Source text.",
@@ -631,6 +630,7 @@ describe("NodeSelector", () => {
           {
             slug: "notes",
             title: "Notes",
+            origin: "plugin",
             entry_kind: "plugin",
             scope: "workspace",
             revision: 1,

@@ -20,7 +20,6 @@ from grafy_core.domain.plugin_installations import InstalledPluginRelease
 from grafy_core.domain.plugin_releases import (
     PluginArtifactConversionContract,
     PluginArtifactTypeContract,
-    PluginDistribution,
     PluginNodeContract,
     PluginPortContract,
     PluginReleaseScope,
@@ -61,6 +60,7 @@ from .services import (
 
 
 PortDirection = Literal["input", "output"]
+CatalogOrigin = Literal["builtin", "plugin", "module"]
 CatalogEntryKind = Literal["plugin", "module"]
 CatalogNonRunnableReason = PluginNonRunnableReason | Literal[
     "deprecated",
@@ -303,37 +303,49 @@ class ArtifactConversionSpecResponse(ApiResponse):
 class PluginSpecResponse(ApiResponse):
     slug: str
     title: str
+    origin: CatalogOrigin = "plugin"
     entry_kind: CatalogEntryKind = "plugin"
     scope: PluginReleaseScope | None = None
-    distribution: PluginDistribution | None = None
     plugin_release: PluginReleasePinModel | None = None
     revision: int | None = Field(default=None, ge=1)
+    publisher: str | None = None
+    installation_scope: PluginReleaseScope | None = None
     runnable: bool = True
     non_runnable_reason: CatalogNonRunnableReason | None = None
     non_runnable_detail: str | None = None
 
     @model_validator(mode="after")
     def validate_catalog_identity(self) -> Self:
-        if self.entry_kind == "module":
-            if self.scope is not None:
+        if self.origin == "module":
+            if self.entry_kind != "module":
+                raise ValueError("Module catalog entries must use entry_kind=module")
+            if self.scope is not None or self.installation_scope is not None:
                 raise ValueError("Module catalog entries cannot declare Plugin scope")
-            if self.distribution is not None:
-                raise ValueError(
-                    "Module catalog entries cannot declare Plugin distribution"
-                )
             if self.plugin_release is not None or self.revision is not None:
                 raise ValueError(
                     "Module catalog entries cannot declare a Plugin release"
                 )
+            if self.publisher is not None:
+                raise ValueError("Module catalog entries cannot declare a publisher")
+            return self
+        if self.origin == "builtin":
+            if self.entry_kind != "plugin":
+                raise ValueError("Builtin catalog entries use entry_kind=plugin")
+            if self.scope is not None or self.installation_scope is not None:
+                raise ValueError("Builtin catalog entries cannot declare Plugin scope")
+            if self.plugin_release is not None or self.revision is not None:
+                raise ValueError(
+                    "Builtin catalog entries cannot declare a Plugin release"
+                )
+            if self.publisher is not None:
+                raise ValueError("Builtin catalog entries cannot declare a publisher")
             return self
         if self.scope is None:
             raise ValueError("Plugin catalog entries must declare Plugin scope")
-        if self.scope is PluginReleaseScope.SYSTEM and self.distribution is None:
-            raise ValueError("System Plugin catalog entries must declare distribution")
-        if self.scope is PluginReleaseScope.WORKSPACE and self.distribution is not None:
-            raise ValueError(
-                "Workspace Plugin catalog entries cannot declare System distribution"
-            )
+        if self.installation_scope is None:
+            object.__setattr__(self, "installation_scope", self.scope)
+        if self.installation_scope is not self.scope:
+            raise ValueError("installation_scope must match Plugin scope")
         if self.plugin_release is None or self.revision is None:
             raise ValueError("Plugin catalog entries must declare an exact release")
         if self.plugin_release.scope is not self.scope:
@@ -350,21 +362,30 @@ class PluginSpecResponse(ApiResponse):
         release: InstalledPluginRelease,
         readiness: PluginReleaseReadiness,
     ) -> Self:
+        publisher = release.published_by_platform_actor
+        if publisher is None and release.published_by_user_id is not None:
+            publisher = str(release.published_by_user_id)
         return cls(
             slug=release.slug,
             title=release.catalog.title,
+            origin="plugin",
             scope=release.scope,
-            distribution=release.distribution,
+            installation_scope=release.scope,
             plugin_release=PluginReleasePinModel(
                 scope=release.scope,
                 slug=release.slug,
                 revision=release.revision,
             ),
             revision=release.revision,
+            publisher=publisher,
             runnable=readiness.runnable,
             non_runnable_reason=readiness.reason,
             non_runnable_detail=readiness.detail,
         )
+
+    @classmethod
+    def from_builtin(cls, slug: str, title: str) -> Self:
+        return cls(slug=slug, title=title, origin="builtin")
 
 
 class PortResponse(ApiResponse):
@@ -479,6 +500,7 @@ class NodeSecretInputResponse(ApiResponse):
 
 
 class NodeSpecResponse(ApiResponse):
+    origin: CatalogOrigin = "plugin"
     operator_id: str
     operator_version: int
     plugin_slug: str
@@ -525,9 +547,15 @@ class NodeSpecResponse(ApiResponse):
         return self
 
     @classmethod
-    def from_registration(cls, registration: NodeRegistration) -> Self:
+    def from_registration(
+        cls,
+        registration: NodeRegistration,
+        *,
+        origin: CatalogOrigin = "builtin",
+    ) -> Self:
         node_class = registration.node_class
         return cls(
+            origin=origin,
             operator_id=node_class.operator_id,
             operator_version=node_class.operator_version,
             plugin_slug=registration.plugin_slug,
@@ -559,6 +587,7 @@ class NodeSpecResponse(ApiResponse):
         definition = entry.definition
         node = GraphModuleNode(definition, module_executor)
         return cls(
+            origin="module",
             operator_id=node.operator_id,
             operator_version=node.operator_version,
             plugin_slug=GRAPH_MODULE_PLUGIN_SLUG,
@@ -591,6 +620,7 @@ class NodeSpecResponse(ApiResponse):
         readiness: PluginReleaseReadiness,
     ) -> Self:
         return cls(
+            origin="plugin",
             operator_id=contract.operator_id,
             operator_version=contract.operator_version,
             plugin_slug=release.slug,
@@ -710,16 +740,25 @@ class NodeRegistryResponse(ApiResponse):
                 f"{GRAPH_MODULE_PLUGIN_SLUG}"
             )
 
-        installed_plugin_slugs = {plugin.slug for plugin in registry.plugins}
-        workspace_host_collisions = installed_plugin_slugs & workspace_slugs
-        if workspace_host_collisions:
-            rendered = ", ".join(sorted(workspace_host_collisions))
+        installed_plugin_slugs = {
+            plugin.slug
+            for plugin in registry.plugins
+            if plugin.slug != GRAPH_MODULE_PLUGIN_SLUG
+        }
+        plugin_slug_collisions = installed_plugin_slugs & (system_slugs | workspace_slugs)
+        if plugin_slug_collisions:
+            rendered = ", ".join(sorted(plugin_slug_collisions))
             raise ValueError(
-                "Workspace Plugin releases conflict with transitional host "
-                f"Plugins: {rendered}"
+                "Published Plugin releases conflict with reserved builtin "
+                f"families: {rendered}"
             )
 
         host_nodes = {registration.key: registration for registration in registry.nodes}
+        reserved_builtin_keys = {
+            key
+            for key, registration in host_nodes.items()
+            if registration.plugin_slug != GRAPH_MODULE_PLUGIN_SLUG
+        }
         release_node_owners: dict[tuple[str, int], InstalledPluginRelease] = {}
         for release in plugin_releases:
             for contract in release.catalog.nodes:
@@ -732,18 +771,11 @@ class NodeRegistryResponse(ApiResponse):
                         f"{other_release.scope.value} Plugin "
                         f"{other_release.slug!r}"
                     )
-                host_registration = host_nodes.get(key)
-                overlays_matching_host = (
-                    release.scope is PluginReleaseScope.SYSTEM
-                    and host_registration is not None
-                    and host_registration.plugin_slug == release.slug
-                    and PluginNodeContract.from_registration(host_registration)
-                    == contract
-                )
-                if host_registration is not None and not overlays_matching_host:
+                if key in reserved_builtin_keys:
+                    host_registration = host_nodes[key]
                     raise ValueError(
                         f"{release.scope.value.title()} Plugin {release.slug!r} "
-                        f"operator {key[0]}@{key[1]} conflicts with host Plugin "
+                        f"operator {key[0]}@{key[1]} conflicts with builtin "
                         f"{host_registration.plugin_slug!r}"
                     )
                 release_node_owners[key] = release
@@ -870,7 +902,7 @@ class NodeRegistryResponse(ApiResponse):
 
         serialized_artifact_contracts: dict[
             tuple[str, int], PluginArtifactTypeContract
-        ] = {}
+        ] = dict(expanded_host_artifact_contracts)
         for release in plugin_releases:
             for contract in (
                 *release.catalog.artifact_types,
@@ -895,18 +927,33 @@ class NodeRegistryResponse(ApiResponse):
                     )
                 serialized_artifact_contracts.setdefault(key, contract)
 
-        visible_host_nodes = [
+        builtin_nodes = [
+            registration
+            for registration in registry.nodes
+            if registration.plugin_slug != GRAPH_MODULE_PLUGIN_SLUG
+        ]
+        module_boundary_nodes = [
             registration
             for registration in registry.nodes
             if registration.plugin_slug == GRAPH_MODULE_PLUGIN_SLUG
+        ]
+        builtin_plugins = [
+            plugin
+            for plugin in registry.plugins
+            if plugin.slug != GRAPH_MODULE_PLUGIN_SLUG
         ]
         return cls(
             plugins=[
                 PluginSpecResponse(
                     slug=GRAPH_MODULE_PLUGIN_SLUG,
                     title="Workspace library",
+                    origin="module",
                     entry_kind="module",
                 )
+            ]
+            + [
+                PluginSpecResponse.from_builtin(plugin.slug, plugin.title)
+                for plugin in builtin_plugins
             ]
             + [
                 PluginSpecResponse.from_plugin_release(
@@ -916,18 +963,23 @@ class NodeRegistryResponse(ApiResponse):
                 for release in plugin_releases
             ],
             artifact_types=[
-                ArtifactTypeSpecResponse.from_plugin_contract(
-                    expanded_host_artifact_contracts.get(key, contract)
-                )
-                for key, contract in serialized_artifact_contracts.items()
+                ArtifactTypeSpecResponse.from_plugin_contract(contract)
+                for contract in serialized_artifact_contracts.values()
             ],
             artifact_conversions=[
                 ArtifactConversionSpecResponse.from_spec(conversion)
                 for conversion in CANONICAL_ARTIFACT_CONVERSIONS
             ],
             nodes=[
+                NodeSpecResponse.from_registration(
+                    registration,
+                    origin="module",
+                )
+                for registration in module_boundary_nodes
+            ]
+            + [
                 NodeSpecResponse.from_registration(registration)
-                for registration in visible_host_nodes
+                for registration in builtin_nodes
             ]
             + [
                 NodeSpecResponse.from_graph_module(entry, module_executor)
@@ -962,6 +1014,7 @@ __all__ = [
     "ArtifactExportFormatResponse",
     "ArtifactTypeSpecResponse",
     "CatalogEntryKind",
+    "CatalogOrigin",
     "CatalogNonRunnableReason",
     "FieldProjectionResponse",
     "NodeRegistryResponse",

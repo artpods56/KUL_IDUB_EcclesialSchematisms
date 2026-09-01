@@ -14,6 +14,7 @@ const document: AuthoredGraphDocument = {
   nodes: [
     {
       id: "a",
+      kind: "builtin",
       operator_id: "demo.op",
       operator_version: 1,
       position: { x: 10, y: 20 },
@@ -46,6 +47,7 @@ const scopedNode: AuthoredGraphDocument["nodes"][number] = {
   ],
   config: { nested: { threshold: 3 } },
   id: "scoped",
+  kind: "plugin",
   input_plugs: [{ id: "plug-1", port: "rows" }],
   layout: { width: 420, body_height: 180, appendix_height: 260 },
   operator_id: "reports.render",
@@ -100,6 +102,7 @@ describe("room-command-bridge", () => {
         ],
         config: { nested: { threshold: 3 } },
         id: "scoped",
+        kind: "plugin",
         input_plugs: [{ id: "plug-1", port: "rows" }],
         layout: { width: 420, body_height: 180, appendix_height: 260 },
         operator_id: "reports.render",
@@ -179,7 +182,7 @@ describe("room-command-bridge", () => {
     const room = toRoomReplaceDocumentCommand({
       name: "Replacement",
       document: {
-        schema_version: 5,
+        schema_version: 6,
         nodes: [scopedNode],
         edges: [],
         presentation: {
@@ -195,7 +198,7 @@ describe("room-command-bridge", () => {
       kind: "replace_document",
       name: "Replacement",
       document: {
-        schema_version: 5,
+        schema_version: 6,
         nodes: [
           {
             artifact_type_bindings: [
@@ -206,6 +209,7 @@ describe("room-command-bridge", () => {
             ],
             config: { nested: { threshold: 3 } },
             id: "scoped",
+            kind: "plugin",
             input_plugs: [{ id: "plug-1", port: "rows" }],
             layout: { width: 420, body_height: 180, appendix_height: 260 },
             operator_id: "reports.render",
@@ -359,7 +363,7 @@ describe("room-command-bridge", () => {
         kind: "replace_document",
         name: "Replaced",
         document: {
-          schema_version: 5,
+          schema_version: 6,
           nodes: [],
           edges: [],
         },

@@ -11,14 +11,14 @@ from grafy_core.artifacts import (
     InMemoryUnitOfWork,
 )
 from grafy_core.nodes import NodeExecutionContext
-from grafy_plugin_arithmetic.nodes import (
+from grafy_workbench.arithmetic.nodes import (
     INTEGER_VALUE,
     IntegerValueOutputWriter,
     IntegerValuePayload,
 )
 from grafy_core.artifact_contracts import RASTER_IMAGE
-from grafy_plugin_image import IMAGES
-from grafy_plugin_sequence.nodes import (
+from grafy_workbench.image import IMAGES
+from grafy_workbench.sequence.nodes import (
     CollectNode,
     CountNode,
     ItemAtNode,

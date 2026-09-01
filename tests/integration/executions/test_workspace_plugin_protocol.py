@@ -36,7 +36,7 @@ from grafy_core.table_contracts import (
     TableColumn,
     TableValueType,
 )
-from grafy_plugin_table.persistence import TableArtifactWriter
+from grafy_workbench.table.persistence import TableArtifactWriter
 from grafy_core.plugin_inspector import InspectionResult
 from grafy_core.runtime.materialization import MaterializationProvenance
 from grafy_core.runtime.persistence import ArtifactWriteContext
@@ -105,7 +105,6 @@ def _example_release(inspection: InspectionResult) -> InstalledPluginRelease:
                 workspace_id=WORKSPACE_ID,
             ),
             execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
-            distribution=None,
             installed_by_user_id=WORKSPACE_ID,
             installed_by_platform_actor=None,
         ),

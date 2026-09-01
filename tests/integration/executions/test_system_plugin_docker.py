@@ -14,7 +14,7 @@ from grafy_api.plugin_oci import PluginOciImageBuilder, runtime_profile
 from grafy_api.plugin_publishing import PluginDirectoryPublisher
 
 
-SYSTEM_LOADER_TARGET = "grafy_plugin_arithmetic.plugin:ARITHMETIC"
+SYSTEM_LOADER_TARGET = "grafy_plugin_llm.plugin:LLM"
 
 
 def _docker_available() -> bool:
@@ -30,9 +30,9 @@ def _docker_available() -> bool:
     return result.returncode == 0
 
 
-def _system_arithmetic_project(repository: Path, destination: Path) -> Path:
+def _system_llm_project(repository: Path, destination: Path) -> Path:
     shutil.copytree(
-        repository / "plugins" / "arithmetic",
+        repository / "plugins" / "llm",
         destination,
         ignore=shutil.ignore_patterns(
             ".venv",
@@ -43,6 +43,7 @@ def _system_arithmetic_project(repository: Path, destination: Path) -> Path:
         ),
     )
     wheels = destination / "wheels"
+    wheels.mkdir(exist_ok=True)
     for wheel in wheels.glob("grafy_core-*.whl"):
         wheel.unlink()
     subprocess.run(
@@ -83,9 +84,9 @@ async def test_retained_system_oci_executes_its_exact_family_loader(
         pytest.skip("local Docker daemon is unavailable")
     repository = Path(__file__).resolve().parents[3]
     project = await asyncio.to_thread(
-        _system_arithmetic_project,
+        _system_llm_project,
         repository,
-        tmp_path / "system-arithmetic",
+        tmp_path / "system-llm",
     )
     verified = await asyncio.to_thread(
         PluginDirectoryPublisher(
@@ -93,7 +94,7 @@ async def test_retained_system_oci_executes_its_exact_family_loader(
             runtime_profile="python-uv",
         ).verify,
         project,
-        expected_slug="builtin.arithmetic",
+        expected_slug="external.llm",
         loader_target=SYSTEM_LOADER_TARGET,
     )
     source_digest = sha256(verified.source_archive).hexdigest()
@@ -106,7 +107,7 @@ async def test_retained_system_oci_executes_its_exact_family_loader(
     ).build_and_store(
         candidate=verified,
     )
-    archive_path = tmp_path / "system-arithmetic.oci.tar"
+    archive_path = tmp_path / "system-llm.oci.tar"
     stream = await storage.load("runtime-test", artifact.object_key)
     try:
         archive_path.write_bytes(stream.read())
@@ -121,7 +122,7 @@ async def test_retained_system_oci_executes_its_exact_family_loader(
     )
     image_reference = f"sha256:{artifact.manifest_digest}"
     loader_manifest = PluginGuestLoaderManifest(
-        slug="builtin.arithmetic",
+        slug="external.llm",
         loader_target=SYSTEM_LOADER_TARGET,
     )
     try:
@@ -147,7 +148,7 @@ async def test_retained_system_oci_executes_its_exact_family_loader(
             "from grafy_core.runtime.plugin_protocol import PluginInvocationRelease;"
             "release=PluginInvocationRelease("
             "scope=PluginReleaseScope.SYSTEM,workspace_id=None,"
-            "slug='builtin.arithmetic',revision=1,source_digest='"
+            "slug='external.llm',revision=1,source_digest='"
             + source_digest
             + "',contract_digest='"
             + contract_digest
@@ -155,7 +156,7 @@ async def test_retained_system_oci_executes_its_exact_family_loader(
             + "d" * 64
             + "');"
             "plugin,catalog=load_guest_plugin(release);"
-            "assert plugin.slug == 'builtin.arithmetic';"
+            "assert plugin.slug == 'external.llm';"
             "assert catalog.slug == plugin.slug"
         )
         executed = subprocess.run(

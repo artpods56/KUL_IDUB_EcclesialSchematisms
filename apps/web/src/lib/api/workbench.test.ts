@@ -27,7 +27,7 @@ const WORKSPACE_ID = "workspace/1";
 describe("saved graph HTTP API", () => {
   it("writes and reads one canonical document shape", async () => {
     const document = {
-      schema_version: 5 as const,
+      schema_version: 6 as const,
       nodes: [],
       edges: [],
       presentation: {
@@ -183,7 +183,7 @@ describe("collaboration HTTP API", () => {
       created_at: "2026-08-07T00:00:03Z",
       updated_at: "2026-08-07T00:00:03Z",
       document: {
-        schema_version: 5,
+        schema_version: 6,
         nodes: [],
         edges: [],
       },

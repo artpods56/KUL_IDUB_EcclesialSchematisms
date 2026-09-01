@@ -52,6 +52,7 @@ function node(
     operator_id: `test.${id}`,
     operator_version: 1,
     plugin_slug: "test",
+    origin: "builtin",
     title: id.replaceAll("_", " "),
     description: `Test node ${id}`,
     catalog_visible: true,

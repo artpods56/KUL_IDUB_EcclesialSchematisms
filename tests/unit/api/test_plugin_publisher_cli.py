@@ -293,7 +293,7 @@ class FakeSystemPublicationWorkflow:
         platform_actor: PlatformPluginActor,
     ) -> SimpleNamespace:
         del verified, platform_actor
-        return SimpleNamespace(slug="builtin.text", revision=1)
+        return SimpleNamespace(slug="external.llm", revision=1)
 
 
 class RecordingWorkspacePublicationWorkflow:
@@ -417,10 +417,10 @@ def test_global_publish_inspects_with_checked_in_loader_target(
             "grafy",
             "plugin",
             "publish",
-            "plugins/text",
+            "plugins/llm",
             "--global",
             "--slug",
-            "builtin.text",
+            "external.llm",
             "--sandbox-image",
             "grafy-publisher:test",
         ],
@@ -430,11 +430,11 @@ def test_global_publish_inspects_with_checked_in_loader_target(
 
     assert (
         RecordingSystemPublisher.observed_loader_target
-        == "grafy_plugin_text.plugin:TEXT"
+        == "grafy_plugin_llm.plugin:LLM"
     )
     assert RecordingSystemPublisher.observed_scratch_root == publisher_scratch_root
     assert (
-        "Published global Plugin builtin.text release 1; promote it explicitly "
+        "Published global Plugin external.llm release 1; promote it explicitly "
         "to activate it" in capsys.readouterr().out
     )
 
@@ -526,11 +526,11 @@ def test_publish_rejects_legacy_workspace_and_actor_options(
             "grafy",
             "plugin",
             "publish",
-            "plugins/text",
+            "plugins/llm",
             "--workspace",
             "00000000-0000-0000-0000-000000000001",
             "--slug",
-            "builtin.text",
+            "external.llm",
             "--actor",
             "ci:test",
         ],

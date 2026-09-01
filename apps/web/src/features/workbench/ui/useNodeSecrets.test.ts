@@ -40,6 +40,7 @@ function secretNodeSpec(): NodeSpec {
     operator_id: "llm.openai.completion",
     operator_version: 1,
     plugin_slug: "external.llm",
+    origin: "builtin",
     title: "OpenAI-compatible completion",
     description: "Completes a prompt through an OpenAI-compatible API.",
     catalog_visible: true,
@@ -79,6 +80,7 @@ function savedNode(
 ): SavedGraphNode {
   return {
     id,
+    kind: "builtin",
     operator_id: "llm.openai.completion",
     operator_version: 1,
     position: { x: 0, y: 0 },

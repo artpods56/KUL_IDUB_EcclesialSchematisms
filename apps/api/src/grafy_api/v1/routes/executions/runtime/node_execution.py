@@ -175,6 +175,7 @@ class NodeExecutionService:
                 cache_policy=cache_policy,
                 opaque_secret_revisions=opaque_secret_revisions,
                 plugin_release=compiled_node.plugin_release,
+                implementation=compiled_node.implementation,
             )
 
         node_outputs: dict[str, ArtifactOutputValue] = {}
@@ -346,6 +347,7 @@ class NodeExecutionService:
                         cache_policy=cache_policy,
                         opaque_secret_revisions=opaque_secret_revisions,
                         plugin_release=compiled_node.plugin_release,
+                        implementation=compiled_node.implementation,
                     ),
                 )
             except Exception as exc:

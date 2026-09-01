@@ -100,6 +100,7 @@ class SavedGraphNodeLayoutModel(SavedGraphApiModel):
 
 
 class SavedGraphNodeModel(SavedGraphApiModel):
+    kind: Literal["builtin", "plugin", "module"]
     id: Identifier
     operator_id: Identifier
     operator_version: int = Field(ge=1)
@@ -119,9 +120,22 @@ class SavedGraphNodeModel(SavedGraphApiModel):
             raise ValueError("Node artifact type binding variables must be unique")
         return self
 
+    @model_validator(mode="after")
+    def validate_kind_and_pin(self) -> Self:
+        if self.kind == "plugin":
+            if self.plugin_release is None:
+                raise ValueError(
+                    "Plugin node must pin an exact Plugin release with scope, slug, "
+                    "and revision"
+                )
+        elif self.plugin_release is not None:
+            raise ValueError(f"{self.kind} node cannot carry a Plugin release pin")
+        return self
+
     @classmethod
     def from_domain(cls, node: SavedGraphNode) -> "SavedGraphNodeModel":
         return cls(
+            kind=node.kind,
             id=node.id,
             operator_id=node.operator_id,
             operator_version=node.operator_version,

@@ -43,6 +43,7 @@ class CatalogPort(ClientModel):
 
 
 class CatalogNode(ClientModel):
+    origin: Literal["builtin", "plugin", "module"] = "builtin"
     operator_id: str
     operator_version: int
     plugin_slug: str

@@ -389,7 +389,6 @@ async def test_docker_runtime_routes_historical_network_egress_through_live_brok
                     workspace_id=WORKSPACE_ID,
                 ),
                 execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
-                distribution=None,
                 installed_by_user_id=WORKSPACE_ID,
                 installed_by_platform_actor=None,
             ),

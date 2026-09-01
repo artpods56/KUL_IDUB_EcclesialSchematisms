@@ -150,6 +150,9 @@ class SavedGraphArtifactTypeBinding(SavedGraphValue):
         return value
 
 
+SavedGraphNodeKind = Literal["builtin", "plugin", "module"]
+
+
 class SavedGraphPluginReleasePin(SavedGraphValue):
     """Exact scoped Plugin release identity pinned on one graph node.
 
@@ -181,7 +184,33 @@ class SavedGraphPluginReleasePin(SavedGraphValue):
         return value.strip()
 
 
+class BuiltinNodeRef(SavedGraphValue):
+    kind: Literal["builtin"] = "builtin"
+    operator_id: GraphIdentifier
+    operator_version: int = Field(ge=1)
+
+
+class PluginNodeRef(SavedGraphValue):
+    kind: Literal["plugin"] = "plugin"
+    operator_id: GraphIdentifier
+    operator_version: int = Field(ge=1)
+    plugin_release_pin: SavedGraphPluginReleasePin
+
+
+class ModuleNodeRef(SavedGraphValue):
+    kind: Literal["module"] = "module"
+    operator_id: GraphIdentifier
+    operator_version: int = Field(ge=1)
+
+
+SavedGraphNodeRef = Annotated[
+    BuiltinNodeRef | PluginNodeRef | ModuleNodeRef,
+    Field(discriminator="kind"),
+]
+
+
 class SavedGraphNode(SavedGraphValue):
+    kind: SavedGraphNodeKind
     id: GraphIdentifier
     operator_id: GraphIdentifier
     operator_version: int = Field(ge=1)
@@ -231,6 +260,20 @@ class SavedGraphNode(SavedGraphValue):
         return cast(dict[str, object], thawed)
 
     @model_validator(mode="after")
+    def validate_kind_and_pin(self) -> Self:
+        if self.kind == "plugin":
+            if self.plugin_release_pin is None:
+                raise ValueError(
+                    "Plugin node must pin an exact Plugin release with scope, slug, "
+                    "and revision"
+                )
+        elif self.plugin_release_pin is not None:
+            raise ValueError(
+                f"{self.kind} node cannot carry a Plugin release pin"
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_artifact_type_bindings(self) -> Self:
         variables = [binding.variable for binding in self.artifact_type_bindings]
         if len(variables) != len(set(variables)):
@@ -238,6 +281,25 @@ class SavedGraphNode(SavedGraphValue):
                 "Saved graph node artifact type binding variables must be unique"
             )
         return self
+
+    def node_ref(self) -> SavedGraphNodeRef:
+        if self.kind == "builtin":
+            return BuiltinNodeRef(
+                operator_id=self.operator_id,
+                operator_version=self.operator_version,
+            )
+        if self.kind == "plugin":
+            if self.plugin_release_pin is None:
+                raise ValueError("Plugin node is missing its release pin")
+            return PluginNodeRef(
+                operator_id=self.operator_id,
+                operator_version=self.operator_version,
+                plugin_release_pin=self.plugin_release_pin,
+            )
+        return ModuleNodeRef(
+            operator_id=self.operator_id,
+            operator_version=self.operator_version,
+        )
 
     def artifact_type_binding_map(self) -> dict[str, ArtifactTypeKey]:
         return {
@@ -522,34 +584,31 @@ def empty_presentation() -> GraphPresentationDocument:
     return GraphPresentationDocument()
 
 
+SAVED_GRAPH_SCHEMA_VERSION = 6
+
+
 class SavedGraphDocument(SavedGraphValue):
-    schema_version: Literal[5] = 5
+    schema_version: Literal[6] = SAVED_GRAPH_SCHEMA_VERSION
     nodes: tuple[SavedGraphNode, ...] = ()
     edges: tuple[SavedGraphEdge, ...] = ()
     presentation: GraphPresentationDocument = Field(default_factory=empty_presentation)
 
     @model_validator(mode="before")
     @classmethod
-    def migrate_document(cls, value: object) -> object:
+    def reject_legacy_document(cls, value: object) -> object:
         if not isinstance(value, Mapping):
             return value
         raw = cast(Mapping[object, object], value)
-        migrated = dict(raw)
-        version = migrated.get("schema_version", 1)
-        if version in (1, 2, 3, 4):
-            migrated["schema_version"] = 5
-        if "presentation" not in migrated:
-            migrated["presentation"] = {
-                "viewers": [],
-                "links": [],
-                "bindings": [],
-                "annotations": [],
-            }
-        elif isinstance(migrated["presentation"], Mapping):
-            presentation = dict(cast(Mapping[object, object], migrated["presentation"]))
-            presentation.setdefault("annotations", [])
-            migrated["presentation"] = presentation
-        return migrated
+        version = raw.get("schema_version")
+        if version is None:
+            return value
+        if version != SAVED_GRAPH_SCHEMA_VERSION:
+            raise ValueError(
+                "Saved graph document schema_version "
+                f"{version!r} is not supported; expected "
+                f"{SAVED_GRAPH_SCHEMA_VERSION}"
+            )
+        return value
 
     @model_validator(mode="after")
     def validate_structure(self) -> Self:

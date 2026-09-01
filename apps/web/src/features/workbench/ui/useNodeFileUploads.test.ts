@@ -27,6 +27,7 @@ function nodeSpec(): NodeSpec {
     operator_id: GEOJSON_UPLOAD_OPERATOR_ID,
     operator_version: 1,
     plugin_slug: "gis",
+    origin: "builtin",
     title: "Import GeoJSON",
     description: "Import a GeoJSON FeatureCollection",
     catalog_visible: true,

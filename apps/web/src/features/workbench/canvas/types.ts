@@ -386,7 +386,8 @@ export function createWorkflowNodeData(
     spec,
     compatibility: { status: "supported" },
     artifactTypeBindings: {},
-    pluginReleasePin: spec.plugin_release
+    pluginReleasePin:
+      spec.origin === "plugin" && spec.plugin_release
       ? {
           scope: spec.plugin_release.scope,
           slug: spec.plugin_release.slug,
@@ -420,6 +421,7 @@ export function serializeRunNode(
   }
   const inputPlugs = serializeInputPlugs(data);
   return {
+    kind: data.spec.origin,
     id,
     operator_id: data.spec.operator_id,
     operator_version: data.spec.operator_version,
@@ -428,7 +430,7 @@ export function serializeRunNode(
       ? inputPlugs.filter((plug) => activeInputPlugIds.has(plug.id))
       : inputPlugs,
     artifact_type_bindings: serializeArtifactTypeBindings(data),
-    ...(data.pluginReleasePin
+    ...(data.spec.origin === "plugin" && data.pluginReleasePin
       ? {
           plugin_release: {
             scope: data.pluginReleasePin.scope,

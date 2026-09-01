@@ -16,12 +16,12 @@ def test_plugin_release_pin_requires_explicit_scope() -> None:
 def test_plugin_release_pin_round_trips_exact_scoped_identity() -> None:
     pin = PluginReleasePinModel(
         scope=PluginReleaseScope.SYSTEM,
-        slug="builtin.text",
+        slug="notes",
         revision=2,
     )
 
     assert pin.model_dump(mode="json") == {
         "scope": "system",
-        "slug": "builtin.text",
+        "slug": "notes",
         "revision": 2,
     }

@@ -40,7 +40,7 @@ from grafy_core.table_contracts import (
     TableColumn,
     TableValueType,
 )
-from grafy_plugin_table.persistence import TableArtifactWriter
+from grafy_workbench.table.persistence import TableArtifactWriter
 from grafy_core.runtime.materialization import MaterializationProvenance
 from grafy_core.runtime.persistence import ArtifactWriteContext
 from grafy_core.runtime.plugin_invocation import (
@@ -302,7 +302,6 @@ async def test_docker_runtime_restores_reuses_hardens_and_cleans_sandbox(
             workspace_id=WORKSPACE_ID,
         ),
         execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
-        distribution=None,
         installed_by_user_id=WORKSPACE_ID,
         installed_by_platform_actor=None,
     )

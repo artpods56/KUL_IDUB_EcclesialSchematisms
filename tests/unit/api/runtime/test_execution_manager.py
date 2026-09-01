@@ -485,16 +485,19 @@ async def test_manager_reports_exact_node_and_cancellation_stops_downstream(
         RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="first",
                     operator_id="test.execution.first_gate",
                     operator_version=1,
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="second",
                     operator_id="test.execution.second_gate",
                     operator_version=1,
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="third",
                     operator_id="test.execution.recording",
                     operator_version=1,
@@ -606,6 +609,7 @@ async def test_manager_isolates_concurrent_execution_progress(tmp_path: Path) ->
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="builtin",
                         id="run-a",
                         operator_id="test.execution.first_gate",
                         operator_version=1,
@@ -620,6 +624,7 @@ async def test_manager_isolates_concurrent_execution_progress(tmp_path: Path) ->
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="builtin",
                         id="run-b",
                         operator_id="test.execution.first_gate",
                         operator_version=1,
@@ -658,6 +663,7 @@ async def test_manager_shutdown_cancels_and_awaits_active_tasks(tmp_path: Path) 
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="builtin",
                         id="run-a",
                         operator_id="test.execution.first_gate",
                         operator_version=1,
@@ -672,6 +678,7 @@ async def test_manager_shutdown_cancels_and_awaits_active_tasks(tmp_path: Path) 
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="builtin",
                         id="run-b",
                         operator_id="test.execution.first_gate",
                         operator_version=1,
@@ -699,11 +706,13 @@ async def test_manager_preserves_failed_graph_result(tmp_path: Path) -> None:
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="builtin",
                         id="failure",
                         operator_id="test.execution.failure",
                         operator_version=1,
                     ),
                     RunNodeRequest(
+                        kind="builtin",
                         id="skipped",
                         operator_id="test.execution.recording",
                         operator_version=1,
@@ -757,12 +766,14 @@ async def test_manager_replays_lifecycle_and_mapped_progress_events(
             RunRequest(
                 nodes=[
                     RunNodeRequest(
+                        kind="builtin",
                         id="sequence",
                         operator_id="arithmetic.integer_sequence",
                         operator_version=1,
                         config={"start": 1, "count": 3, "step": 1},
                     ),
                     RunNodeRequest(
+                        kind="builtin",
                         id="progress",
                         operator_id="test.execution.progress",
                         operator_version=1,
@@ -1364,6 +1375,7 @@ async def test_failed_execution_releases_process_capacity(tmp_path: Path) -> Non
         RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="failure",
                     operator_id="test.execution.failure",
                     operator_version=1,

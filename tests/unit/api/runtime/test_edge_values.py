@@ -15,13 +15,13 @@ from grafy_core.artifacts import (
 from grafy_core.canonical_conversions import INTEGER_TO_TEXT
 from grafy_core.conversions import ArtifactConversion, ArtifactConversionKey
 from grafy_core.nodes import resolve_node_contracts
-from grafy_plugin_arithmetic.nodes import (
+from grafy_workbench.arithmetic.nodes import (
     INTEGER_VALUE,
     IntegerValueOutputWriter,
     IntegerValueResolver,
 )
-from grafy_plugin_sequence.nodes import CollectNode
-from grafy_plugin_text.nodes import (
+from grafy_workbench.sequence.nodes import CollectNode
+from grafy_workbench.text.nodes import (
     TEXT_VALUE,
     ReplaceTextNode,
     TextValueOutputWriter,
@@ -112,6 +112,7 @@ def _compiled_replace(invocation: NodeInvocation) -> CompiledNode:
     node = ReplaceTextNode()
     return CompiledNode(
         request=RunNodeRequest(
+            kind="builtin",
             id="target",
             operator_id=node.operator_id,
             operator_version=node.operator_version,
@@ -137,6 +138,7 @@ async def test_instance_plugs_follow_declared_order_and_ignore_other_targets(
     node = CollectNode()
     compiled_node = CompiledNode(
         request=RunNodeRequest(
+            kind="builtin",
             id="collect",
             operator_id=node.operator_id,
             operator_version=node.operator_version,

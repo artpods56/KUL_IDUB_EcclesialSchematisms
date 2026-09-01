@@ -278,6 +278,7 @@ def _compiled_add(
 ) -> CompiledNode:
     return CompiledNode(
         request=RunNodeRequest(
+            kind="builtin",
             id=node_id,
             operator_id=node.operator_id,
             operator_version=node.operator_version,

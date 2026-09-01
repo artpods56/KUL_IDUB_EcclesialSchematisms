@@ -11,6 +11,7 @@ import {
 
 const node = (id: string) => ({
   id,
+  kind: "builtin" as const,
   operator_id: `test.${id}`,
   operator_version: 1,
   config: { label: id },
@@ -51,7 +52,7 @@ describe("authored graph document", () => {
     expect(request).toEqual({
       name: value.name,
       document: {
-        schema_version: 5,
+        schema_version: 6,
         nodes: value.nodes,
         edges: value.edges,
         presentation: {
@@ -74,10 +75,11 @@ describe("authored graph document", () => {
     const input: CreateSavedGraphRequest = {
       name: "Operator-agnostic graph",
       document: {
-        schema_version: 5,
+        schema_version: 6,
         nodes: [
           {
             id: "legacy-node",
+            kind: "builtin",
             operator_id: "unavailable.operator",
             operator_version: 7,
             config: {
@@ -136,10 +138,11 @@ describe("authored graph document", () => {
     expect(createSavedGraphRequest(canonical)).toEqual({
       name: "Operator-agnostic graph",
       document: {
-        schema_version: 5,
+        schema_version: 6,
         nodes: [
         {
           id: "legacy-node",
+          kind: "builtin",
           operator_id: "unavailable.operator",
           operator_version: 7,
           config: {
@@ -228,7 +231,7 @@ describe("authored graph document", () => {
     const input: CreateSavedGraphRequest = {
       name: "Adversarial graph",
       document: {
-        schema_version: 5,
+        schema_version: 6,
         nodes: [
           runtimeNode as unknown as SavedGraphDocument["nodes"][number],
         ],

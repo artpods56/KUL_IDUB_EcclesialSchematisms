@@ -214,6 +214,29 @@ export function sortCatalogNodes(nodes: readonly NodeSpec[]): NodeSpec[] {
   });
 }
 
+const CATALOG_ORIGIN_ORDER = ["builtin", "plugin", "module"] as const;
+
+const CATALOG_ORIGIN_TITLES: Record<(typeof CATALOG_ORIGIN_ORDER)[number], string> = {
+  builtin: "Built-in",
+  plugin: "Plugins",
+  module: "Modules",
+};
+
+export function catalogOriginGroups(
+  nodes: readonly NodeSpec[],
+): readonly {
+  readonly origin: (typeof CATALOG_ORIGIN_ORDER)[number];
+  readonly title: string;
+  readonly nodes: readonly NodeSpec[];
+}[] {
+  return CATALOG_ORIGIN_ORDER.flatMap((origin) => {
+    const group = nodes.filter((spec) => spec.origin === origin);
+    return group.length
+      ? [{ origin, title: CATALOG_ORIGIN_TITLES[origin], nodes: group }]
+      : [];
+  });
+}
+
 export function nodeCatalogSearchText(
   spec: NodeSpec,
   registry: NodeRegistry,
@@ -227,8 +250,8 @@ export function nodeCatalogSearchText(
     spec.plugin_slug,
     plugin.title,
     plugin.entry_kind,
+    plugin.origin,
     plugin.scope ?? "",
-    plugin.distribution ?? "",
     ...spec.inputs.flatMap((port) => portSearchTerms(port, registry)),
     ...spec.outputs.flatMap((port) => portSearchTerms(port, registry)),
     ...fields.flatMap((field) => [
@@ -325,13 +348,13 @@ export function catalogNodeProviderLabel(
   registry: NodeRegistry,
 ): string {
   const plugin = pluginFor(registry, spec.plugin_slug);
-  if (plugin.entry_kind === "module") {
+  if (plugin.origin === "module" || plugin.entry_kind === "module") {
     const state = spec.publication_state ?? "published";
     return `Module · release ${spec.module_graph_revision} · ${state}`;
   }
+  if (plugin.origin === "builtin") return plugin.title || "Built-in";
   if (plugin.scope === "workspace") return `${plugin.title} · Workspace`;
-  if (plugin.distribution === "optional") return plugin.title || "Optional";
-  return plugin.title || "System";
+  return plugin.title || "Plugin";
 }
 
 /** All published releases for a module (including non-current). */

@@ -155,6 +155,7 @@ class RunGraph:
         request = RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind=node.kind,
                     id=node.id,
                     operator_id=node.operator_id,
                     operator_version=node.operator_version,

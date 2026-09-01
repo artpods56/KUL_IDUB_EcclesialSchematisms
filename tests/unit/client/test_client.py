@@ -21,7 +21,7 @@ def _catalog_payload() -> dict[str, object]:
             {
                 "operator_id": "text.input",
                 "operator_version": 1,
-                "plugin_slug": "builtin.text",
+                "plugin_slug": "text",
                 "title": "Text",
                 "description": "Produces text.",
                 "config_schema": {},
@@ -40,11 +40,7 @@ def _catalog_payload() -> dict[str, object]:
                         "accepted_shapes": ["one"],
                     }
                 ],
-                "plugin_release": {
-                    "scope": "system",
-                    "slug": "builtin.text",
-                    "revision": 2,
-                },
+                "origin": "builtin",
                 "runnable": True,
             }
         ],

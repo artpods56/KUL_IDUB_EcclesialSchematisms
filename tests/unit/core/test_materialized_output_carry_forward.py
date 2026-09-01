@@ -25,6 +25,7 @@ def _node(
     x: float = 0,
 ) -> SavedGraphNode:
     return SavedGraphNode(
+        kind="builtin",
         id=node_id,
         operator_id="arithmetic.number",
         operator_version=1,

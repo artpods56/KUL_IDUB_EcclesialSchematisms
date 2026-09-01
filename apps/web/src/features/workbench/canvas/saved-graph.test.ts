@@ -56,6 +56,7 @@ function nodeSpec(
     operator_id: operatorId,
     operator_version: 1,
     plugin_slug: "test",
+    origin: "builtin",
     title: operatorId,
     description: operatorId,
     catalog_visible: true,
@@ -118,10 +119,11 @@ function graphWithEdge(
     created_at: "2026-07-15T12:00:00Z",
     updated_at: "2026-07-15T12:00:00Z",
     document: {
-      schema_version: 5,
+      schema_version: 6,
       nodes: [
         {
           id: "source-node",
+          kind: "builtin",
           operator_id: "source",
           operator_version: 1,
           config: {},
@@ -131,6 +133,7 @@ function graphWithEdge(
         },
         {
           id: "target-node",
+          kind: "builtin",
           operator_id: "target",
           operator_version: 1,
           config: {},
@@ -220,6 +223,7 @@ describe("scoped Plugin node hydration", () => {
     const systemSpec: NodeSpec = {
       ...nodeSpec("source", "output", "x"),
       plugin_slug: "reports",
+      origin: "plugin",
       plugin_revision: 3,
       plugin_release: { scope: "system", slug: "reports", revision: 3 },
       title: "System report source",
@@ -227,6 +231,7 @@ describe("scoped Plugin node hydration", () => {
     const workspaceSpec: NodeSpec = {
       ...nodeSpec("source", "output", "x"),
       plugin_slug: "reports",
+      origin: "plugin",
       plugin_revision: 5,
       plugin_release: {
         scope: "workspace",
@@ -582,6 +587,7 @@ describe("saved collection modes", () => {
           {
             ...sourceNode,
             id: "other-source-node",
+            kind: "builtin",
             operator_id: "other-source",
           },
           targetNode,
@@ -669,6 +675,7 @@ function collectRegistry(): NodeRegistry {
     operator_id: "test.collect",
     operator_version: 1,
     plugin_slug: "test",
+    origin: "builtin",
     title: "Collect text",
     description: "Collect ordered text inputs.",
     catalog_visible: true,
@@ -716,10 +723,11 @@ function graphWithCollectPlugs(): SavedGraph {
     created_at: "2026-07-15T12:00:00Z",
     updated_at: "2026-07-15T12:00:00Z",
     document: {
-      schema_version: 5,
+      schema_version: 6,
       nodes: [
         {
           id: "source-node",
+          kind: "builtin",
           operator_id: "source",
           operator_version: 1,
           config: {},
@@ -729,6 +737,7 @@ function graphWithCollectPlugs(): SavedGraph {
         },
         {
           id: "collect-node",
+          kind: "builtin",
           operator_id: "test.collect",
           operator_version: 1,
           config: {},
@@ -803,6 +812,7 @@ function genericCollectRegistry(): NodeRegistry {
     operator_id: "sequence.collect",
     operator_version: 1,
     plugin_slug: "test",
+    origin: "builtin",
     title: "Collect",
     description: "Collect ordered artifacts.",
     catalog_visible: true,
@@ -865,10 +875,11 @@ function graphWithGenericCollectBinding(): SavedGraph {
     created_at: "2026-07-15T12:00:00Z",
     updated_at: "2026-07-15T12:00:00Z",
     document: {
-      schema_version: 5,
+      schema_version: 6,
       nodes: [
         {
           id: "source-node",
+          kind: "builtin",
           operator_id: "source",
           operator_version: 1,
           config: {},
@@ -878,6 +889,7 @@ function graphWithGenericCollectBinding(): SavedGraph {
         },
         {
           id: "collect-node",
+          kind: "builtin",
           operator_id: "sequence.collect",
           operator_version: 1,
           config: {},
@@ -1046,6 +1058,7 @@ describe("saved graph module nodes", () => {
       operator_id: moduleOperatorId,
       operator_version: revision,
       plugin_slug: "saved-graph-modules",
+      origin: "module",
       title: `Extract image r${revision}`,
       description: "Hidden structured extraction graph",
       config_schema: {},
@@ -1074,10 +1087,11 @@ describe("saved graph module nodes", () => {
       created_at: "2026-07-16T12:00:00Z",
       updated_at: "2026-07-16T12:00:00Z",
       document: {
-        schema_version: 5,
+        schema_version: 6,
         nodes: [
           {
             id: "images",
+            kind: "builtin",
             operator_id: IMAGE_UPLOAD_OPERATOR_ID,
             operator_version: 1,
             config: {},
@@ -1087,6 +1101,7 @@ describe("saved graph module nodes", () => {
           },
           {
             id: "extract",
+            kind: "builtin",
             operator_id: moduleOperatorId,
             operator_version: 1,
             config: {},
@@ -1121,6 +1136,7 @@ describe("saved graph module nodes", () => {
       plugins: [{
         slug: "saved-graph-modules",
         title: "Modules",
+        origin: "module",
         entry_kind: "module",
         runnable: true,
       }],

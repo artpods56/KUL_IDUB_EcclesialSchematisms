@@ -392,7 +392,6 @@ class SystemPluginPublicationWorkflow:
             runtime_artifact=runtime_artifact,
             loader_target=verified.loader_target,
             execution_policy=entry.execution_policy,
-            distribution=entry.distribution,
             platform_actor=platform_actor,
         )
 
@@ -426,11 +425,6 @@ class SystemPluginPublicationWorkflow:
             raise PluginPublishingError(
                 f"System Plugin {entry.slug!r} execution policy does not match "
                 "the checked-in inventory"
-            )
-        if candidate.release.distribution is not entry.distribution:
-            raise PluginPublishingError(
-                f"System Plugin {entry.slug!r} distribution does not match the "
-                "checked-in inventory"
             )
         if candidate.release.capabilities.capabilities != entry.capabilities:
             raise PluginPublishingError(

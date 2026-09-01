@@ -14,6 +14,7 @@ import { createWorkflowNodeData } from "./types";
 
 const source = {
   id: "source",
+  kind: "builtin" as const,
   operator_id: "test.source",
   operator_version: 1,
   config: { label: "source" },
@@ -25,6 +26,7 @@ const source = {
 
 const target = {
   id: "target",
+  kind: "builtin" as const,
   operator_id: "test.target",
   operator_version: 1,
   config: { label: "target" },
@@ -77,6 +79,7 @@ describe("Workbench authored document adapter", () => {
       operator_id: "reports.render",
       operator_version: 7,
       plugin_slug: "reports",
+      origin: "plugin",
       plugin_revision: 11,
       plugin_release: { scope: "system", slug: "reports", revision: 11 },
       title: "Render report",
@@ -106,6 +109,7 @@ describe("Workbench authored document adapter", () => {
         ],
         config: { nested: { threshold: 3 } },
         id: "plugin-node",
+        kind: "plugin",
         input_plugs: [],
         layout: { width: 420, body_height: 180, appendix_height: 260 },
         operator_id: "reports.render",

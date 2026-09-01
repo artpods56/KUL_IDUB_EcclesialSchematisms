@@ -25,7 +25,6 @@ from grafy_core.domain.plugin_releases import (
     PluginArtifactTypeKey,
     PluginCapabilityManifest,
     PluginCatalogManifest,
-    PluginDistribution,
     PluginExecutionPolicy,
     PluginFieldProjection,
     PluginNodeContract,
@@ -55,8 +54,8 @@ from grafy_core.domain.plugin_revocations import (
     PluginReleaseRevocationReason,
 )
 from grafy_core.nodes import NodeExecutionContext, PortShape
-from grafy_plugin_text import TEXT as TEXT_PLUGIN
-from grafy_plugin_text.nodes import TextValueOutputWriter, TextValueResolver
+from grafy_workbench.text import TEXT as TEXT_PLUGIN
+from grafy_workbench.text.nodes import TextValueOutputWriter, TextValueResolver
 from grafy_core.plugins import PluginRuntimeContext
 from grafy_core.ports.node_secrets import UnavailableNodeSecretResolver
 from grafy_core.ports.modules import GraphModuleExecutionResult
@@ -109,7 +108,7 @@ from grafy_api.v1.routes.executions.runtime.node_execution import (
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000871")
 OTHER_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000872")
 TEXT = PluginArtifactTypeKey(id="scalar.text", schema_version=1)
-HOST_LOADER_TARGET = "grafy_plugin_text.plugin:TEXT"
+HOST_LOADER_TARGET = "grafy_workbench.text.plugin:TEXT"
 HOST_BUILD_DIGEST = "f" * 64
 _RELEASE_ADMISSION = ReleaseExecutionAdmission(
     isolated_adapter_available=True,
@@ -215,11 +214,6 @@ def _release(
             ),
         ),
         execution_policy=execution_policy,
-        distribution=(
-            PluginDistribution.PUBLISHED
-            if scope is PluginReleaseScope.SYSTEM
-            else None
-        ),
         installed_by_user_id=(
             workspace_id if scope is PluginReleaseScope.WORKSPACE else None
         ),
@@ -252,7 +246,7 @@ def _host_text_release(revision: int) -> InstalledPluginRelease:
         source_digest=f"{revision}" * 64,
         lock_digest="9" * 64,
         runtime_profile="python-uv",
-        loader_target="grafy_plugin_text.plugin:TEXT",
+        loader_target="grafy_workbench.text.plugin:TEXT",
         runtime_image_digest=runtime_artifact.manifest_digest,
         runtime_artifact=runtime_artifact,
         published_by_platform_actor="test:system",
@@ -266,7 +260,6 @@ def _host_text_release(revision: int) -> InstalledPluginRelease:
                 workspace_id=None,
             ),
             execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-            distribution=PluginDistribution.BUNDLED,
             installed_by_user_id=None,
             installed_by_platform_actor="test:system",
         ),
@@ -415,6 +408,7 @@ def _compiler(
         plugin_release_lookup=lookup or RecordingReleaseLookup(),
         plugin_invoker=invoker or NoopInvoker(),
         release_admission=admission,
+        build_digest="a" * 64,
     )
 
 
@@ -425,6 +419,7 @@ def _pinned_node(
     operator_id: str = "notes.echo",
 ) -> RunNodeRequest:
     return RunNodeRequest(
+        kind="plugin" if pin is not None else "builtin",
         id=node_id,
         operator_id=operator_id,
         operator_version=1,
@@ -479,6 +474,7 @@ def _system_text_run_request(revision: int) -> RunRequest:
     return RunRequest(
         nodes=[
             RunNodeRequest(
+                kind="plugin",
                 id="input",
                 operator_id="text.input",
                 operator_version=1,
@@ -788,6 +784,7 @@ async def test_isolated_exact_release_supplies_its_own_projectable_artifact_cont
         RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="plugin",
                     id="producer",
                     operator_id=producer.operator_id,
                     operator_version=producer.operator_version,
@@ -1154,6 +1151,7 @@ async def test_workspace_plugin_node_without_a_pin_fails_closed() -> None:
     request = RunRequest(
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="echo",
                 operator_id="notes.echo",
                 operator_version=1,
@@ -1351,6 +1349,7 @@ async def test_pinned_plugin_participates_in_ordinary_map_semantics() -> None:
     )
 
     source = RunNodeRequest(
+        kind="plugin",
         id="source",
         operator_id="text.split",
         operator_version=1,
@@ -1624,19 +1623,16 @@ async def test_host_node_output_feeds_pinned_workspace_plugin_in_same_graph(
             runtime_profile="python-uv",
             system_host_bindings=(binding,),
         ),
+        build_digest="a" * 64,
     )
     request = RunRequest(
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="host-input",
                 operator_id="text.input",
                 operator_version=1,
                 config={"text": "from host"},
-                plugin_release=PluginReleasePinModel(
-                    scope=PluginReleaseScope.SYSTEM,
-                    slug="builtin.text",
-                    revision=1,
-                ),
             ),
             _pinned_node(
                 "plugin-echo",

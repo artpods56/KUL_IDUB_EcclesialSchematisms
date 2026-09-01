@@ -6,8 +6,8 @@ from grafy_core.artifacts import InMemoryUnitOfWork
 from grafy_core.table_contracts import (
     TABLE_DATA,
 )
-from grafy_plugin_table import TABLES
-from grafy_plugin_table.persistence import TableArtifactResolver, TableArtifactWriter
+from grafy_workbench.table import TABLES
+from grafy_workbench.table.persistence import TableArtifactResolver, TableArtifactWriter
 from grafy_core.plugins import PluginRegistry, PluginRuntimeContext
 from grafy_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
 from grafy_core.runtime.persistence import InlineModelOutputWriter

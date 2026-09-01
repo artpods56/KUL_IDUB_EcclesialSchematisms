@@ -13,7 +13,7 @@ from grafy_api.v1.routes.executions.models import (
 from tests.support.system_plugins import selected_system_run_node as RunNodeRequest
 from grafy_core.artifacts import ArtifactRefSequence
 from grafy_core.artifact_contracts import TextValuePayload
-from grafy_plugin_text.nodes import (
+from grafy_workbench.text.nodes import (
     MarkdownValue,
     TextInputConfig,
 )
@@ -26,24 +26,28 @@ def _collect_run_payload() -> dict[str, object]:
     return RunRequest(
         nodes=[
             RunNodeRequest(
+                kind="builtin",
                 id="sequence-input",
                 operator_id="text.input",
                 operator_version=1,
                 config={"text": "first|second"},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="split",
                 operator_id="text.split",
                 operator_version=1,
                 config={"separator": "|"},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="single-input",
                 operator_id="text.input",
                 operator_version=1,
                 config={"text": "third"},
             ),
             RunNodeRequest(
+                kind="builtin",
                 id="collect",
                 operator_id="sequence.collect",
                 operator_version=1,
@@ -165,12 +169,14 @@ def test_as_markdown_graph_persists_exact_source(
         RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="source",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": source},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="markdown",
                     operator_id="text.as_markdown",
                     operator_version=1,
@@ -231,24 +237,28 @@ def test_text_graph_splits_maps_replacement_and_joins(
         RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="input",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "alpha||beta||||gamma||"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="split",
                     operator_id="text.split",
                     operator_version=1,
                     config={"separator": "||"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="replace",
                     operator_id="text.replace",
                     operator_version=1,
                     config={"search": "a", "replacement": "A"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="join",
                     operator_id="text.join",
                     operator_version=1,

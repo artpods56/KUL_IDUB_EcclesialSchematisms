@@ -5,7 +5,6 @@ import pytest
 from typing_extensions import override
 
 from grafy_api.plugin_admission import (
-    ReleaseExecutionAdmission,
     isolated_release_admission,
 )
 from grafy_api.plugin_egress import (
@@ -70,11 +69,17 @@ class RecordingSystemImageBuilder(PluginOciImageBuilder):
         )
 
 
+_LLM_CAPABILITIES = (
+    PluginRuntimeCapability.NETWORK_EGRESS,
+    PluginRuntimeCapability.NODE_SECRETS,
+)
+
+
 def _catalog(
     *,
-    slug: str = "builtin.text",
-    operator_id: str = "text.echo",
-    required_capabilities: tuple[PluginRuntimeCapability, ...] = (),
+    slug: str = "external.llm",
+    operator_id: str = "llm.openai_compatible.chat_completion",
+    required_capabilities: tuple[PluginRuntimeCapability, ...] = _LLM_CAPABILITIES,
 ) -> PluginCatalogManifest:
     http_egress = None
     if PluginRuntimeCapability.NETWORK_EGRESS in set(required_capabilities):
@@ -105,11 +110,15 @@ def _verified(
     *,
     catalog: PluginCatalogManifest | None = None,
     capabilities: PluginCapabilityManifest | None = None,
-    loader_target: str = "grafy_plugin_text.plugin:TEXT",
+    loader_target: str = "grafy_plugin_llm.plugin:LLM",
 ) -> VerifiedPluginCandidate:
+    release_catalog = catalog or _catalog()
     return VerifiedPluginCandidate(
-        catalog=catalog or _catalog(),
-        capabilities=capabilities or PluginCapabilityManifest(),
+        catalog=release_catalog,
+        capabilities=capabilities
+        or PluginCapabilityManifest(
+            capabilities=release_catalog.nodes[0].required_capabilities
+        ),
         loader_target=loader_target,
         source_archive=source,
         lock_digest=sha256(b"lock").hexdigest(),
@@ -124,12 +133,19 @@ def _workflow(
     *,
     bindings: tuple[SystemHostPluginBinding, ...] = (),
 ) -> SystemPluginPublicationWorkflow:
+    destination = PluginEgressDestination.parse("https://api.openai.com:443")
     return SystemPluginPublicationWorkflow(
         image_builder,
         releases,
-        ReleaseExecutionAdmission(
-            isolated_adapter_available=True,
-            runtime_profile="python-uv",
+        isolated_release_admission(
+            profile=runtime_profile("python-uv"),
+            egress_policy=PluginEgressBrokerPolicy(
+                broker_image="registry.example/grafy-egress@sha256:" + "a" * 64,
+                destinations=(destination,),
+            ),
+            network_policy=legacy_network_policy(
+                http_destinations=(destination,),
+            ),
             system_host_bindings=bindings,
         ),
         inventory,
@@ -173,29 +189,7 @@ async def test_system_publication_stages_then_explicitly_promotes_and_rolls_back
         inventory.entry_for(second.slug).loader_target,
     ]
 
-    with pytest.raises(PluginPublishingError, match="exact deployment host binding"):
-        await workflow.promote(
-            slug=second.slug,
-            revision=second.revision,
-            platform_actor=actor,
-            expected_generation=0,
-        )
-    assert await releases.list_current_system() == []
-
-    inventory_entry = inventory.entry_for(second.slug)
-    second_binding = SystemHostPluginBinding.from_release(
-        second,
-        selection_generation=1,
-        loader_target=inventory_entry.loader_target,
-        host_build_digest="f" * 64,
-    )
-    promotion_workflow = _workflow(
-        image_builder,
-        releases,
-        inventory,
-        bindings=(second_binding,),
-    )
-    selected = await promotion_workflow.promote(
+    selected = await workflow.promote(
         slug=second.slug,
         revision=second.revision,
         platform_actor=actor,
@@ -206,7 +200,7 @@ async def test_system_publication_stages_then_explicitly_promotes_and_rolls_back
     assert selected.generation == 1
     assert await releases.list_current_system() == [second]
 
-    selected_again = await promotion_workflow.promote(
+    selected_again = await workflow.promote(
         slug=second.slug,
         revision=second.revision,
         platform_actor=actor,
@@ -214,18 +208,12 @@ async def test_system_publication_stages_then_explicitly_promotes_and_rolls_back
     )
     assert selected_again.generation == 1
 
-    mismatched_workflow = _workflow(
-        image_builder,
-        releases,
-        inventory,
-        bindings=(second_binding.model_copy(update={"selection_generation": 2}),),
-    )
-    with pytest.raises(PluginPublishingError, match="generation"):
-        await mismatched_workflow.promote(
+    with pytest.raises(PluginReleaseError, match="changed concurrently"):
+        await workflow.promote(
             slug=second.slug,
             revision=second.revision,
             platform_actor=actor,
-            expected_generation=selected_again.generation,
+            expected_generation=selected_again.generation + 1,
         )
     unchanged = await releases.get_selection(
         WORKSPACE_ID,
@@ -236,19 +224,7 @@ async def test_system_publication_stages_then_explicitly_promotes_and_rolls_back
     assert unchanged.selected_release_id == second.id
     assert unchanged.generation == 1
 
-    first_binding = SystemHostPluginBinding.from_release(
-        first,
-        selection_generation=2,
-        loader_target=inventory_entry.loader_target,
-        host_build_digest="e" * 64,
-    )
-    rollback_workflow = _workflow(
-        image_builder,
-        releases,
-        inventory,
-        bindings=(first_binding,),
-    )
-    rolled_back = await rollback_workflow.promote(
+    rolled_back = await workflow.promote(
         slug=first.slug,
         revision=first.revision,
         platform_actor=actor,
@@ -342,73 +318,6 @@ async def test_isolated_llm_system_release_promotes_without_a_host_manifest(
     assert release.execution_policy is PluginExecutionPolicy.ISOLATED_ONLY
     assert selection.selected_release_id == release.id
     assert image_builder.loader_targets == [entry.loader_target]
-    await database.dispose()
-
-
-@pytest.mark.asyncio
-async def test_host_image_system_release_promotes_with_staged_uploads(
-    tmp_path: Path,
-) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'image.sqlite3'}"
-    await create_schema(database_url)
-    database = create_database(database_url)
-    releases = PluginReleaseService(
-        lambda: SqlAlchemyUnitOfWork(database.sessions),
-        LocalFileObjectStore(tmp_path / "objects"),
-        bucket="plugins",
-    )
-    image_builder = RecordingSystemImageBuilder()
-    inventory = load_system_plugin_inventory(CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH)
-    entry = inventory.entry_for("builtin.image")
-    candidate = _verified(
-        b"image",
-        catalog=_catalog(
-            slug=entry.slug,
-            operator_id="image.upload",
-            required_capabilities=entry.capabilities,
-        ),
-        capabilities=PluginCapabilityManifest(capabilities=entry.capabilities),
-        loader_target=entry.loader_target,
-    )
-    actor = PlatformPluginActor("ci:system-release")
-    publication = SystemPluginPublicationWorkflow(
-        image_builder,
-        releases,
-        isolated_release_admission(
-            profile=runtime_profile("python-uv"),
-            egress_policy=PluginEgressBrokerPolicy(),
-            network_policy=legacy_network_policy(),
-        ),
-        inventory,
-    )
-    release = await publication.publish_verified(candidate, platform_actor=actor)
-    binding = SystemHostPluginBinding.from_release(
-        release,
-        selection_generation=1,
-        loader_target=entry.loader_target,
-        host_build_digest="f" * 64,
-    )
-    promotion = SystemPluginPublicationWorkflow(
-        image_builder,
-        releases,
-        isolated_release_admission(
-            profile=runtime_profile("python-uv"),
-            egress_policy=PluginEgressBrokerPolicy(),
-            network_policy=legacy_network_policy(),
-            system_host_bindings=(binding,),
-        ),
-        inventory,
-    )
-
-    selection = await promotion.promote(
-        slug=release.slug,
-        revision=release.revision,
-        platform_actor=actor,
-        expected_generation=0,
-    )
-
-    assert selection.selected_release_id == release.id
-    assert selection.selected_revision == 1
     await database.dispose()
 
 

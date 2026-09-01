@@ -441,6 +441,7 @@ def test_image_upload_materializes_sample_images(
         RunRequest(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="upload",
                     operator_id="image.upload",
                     operator_version=1,

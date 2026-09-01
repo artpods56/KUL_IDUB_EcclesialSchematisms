@@ -25,13 +25,13 @@ from grafy_core.runtime.persistence import (
     PersistedNodeOutput,
 )
 from grafy_core.runtime.resolvers import ResolverRegistry
-from grafy_plugin_image import IMAGES
-from grafy_plugin_image.nodes import (
+from grafy_workbench.image import IMAGES
+from grafy_workbench.image.nodes import (
     ImageUploadError,
     RasterImageOutputWriter,
     UploadImagesNode,
 )
-from grafy_plugin_sequence.nodes import CollectNode
+from grafy_workbench.sequence.nodes import CollectNode
 from grafy_plugin_ocr.artifacts import OCR_PAGE_RESULT
 from grafy_plugin_ocr.persistence import OcrPageResultOutputWriter
 from grafy_plugin_ocr.resolvers import PilImageResolver

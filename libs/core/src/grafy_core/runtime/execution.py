@@ -15,6 +15,7 @@ from grafy_core.artifacts import (
 )
 from grafy_core.domain.artifact_outputs import ArtifactOutputValue
 from grafy_core.domain.invocation_cache import InvocationCacheEntry
+from grafy_core.domain.implementation import ImplementationIdentity
 from grafy_core.domain.plugin_releases import PluginReleaseIdentity
 from grafy_core.nodes import (
     InputContract,
@@ -76,6 +77,7 @@ class NodeRuntime:
         cache_policy: NodeCachePolicy = NodeCachePolicy.NEVER,
         opaque_secret_revisions: Mapping[str, str] | None = None,
         plugin_release: PluginReleaseIdentity | None = None,
+        implementation: ImplementationIdentity | None = None,
     ) -> PersistedNodeOutput | BaseModel:
         effective_bindings = artifact_type_bindings or {}
         resolved_contracts = resolve_node_contracts(
@@ -97,7 +99,7 @@ class NodeRuntime:
                     config=validated_config,
                     artifact_type_bindings=effective_bindings,
                     opaque_secret_revisions=opaque_secret_revisions or {},
-                    plugin_release=plugin_release,
+                    implementation=implementation,
                 )
             if cache_key is not None:
                 cached_entry = await self._invocation_cache.get(
@@ -165,8 +167,8 @@ class NodeRuntime:
             provenance=provenance,
             metadata=(
                 {}
-                if plugin_release is None
-                else {"plugin_release": plugin_release.provenance_document()}
+                if implementation is None
+                else {"implementation": implementation.provenance_document()}
             ),
         )
         if not isinstance(persisted, PersistedNodeOutput):

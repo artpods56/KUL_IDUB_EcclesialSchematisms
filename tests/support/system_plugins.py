@@ -4,52 +4,21 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from uuid import UUID
 
-from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
-from grafy_core.domain.plugin_installations import (
-    InstalledPluginRelease,
-    PluginInstallation,
-)
-from grafy_core.domain.plugin_releases import (
-    PluginArtifactConversionContract,
-    PluginCapabilityManifest,
-    PluginCatalogManifest,
-    PluginDistribution,
-    PluginExecutionPolicy,
-    PluginRelease,
-    PluginReleaseNamespace,
-    PluginReleaseScope,
-    PluginRuntimeArtifact,
-    plugin_contract_digest,
-    plugin_profile_digest,
-    plugin_protocol_digest,
-)
-from grafy_core.canonical_conversions import CANONICAL_ARTIFACT_CONVERSIONS_BY_KEY
+from grafy_core.domain.plugin_installations import InstalledPluginRelease
+from grafy_core.domain.plugin_releases import PluginReleaseScope
 from grafy_core.domain.plugin_revocations import PluginReleaseRevocation
 from grafy_core.domain.plugin_selection import PluginReleaseSelection
 from grafy_core.operators.modules import MODULE_BOUNDARY_REGISTRATIONS
 from grafy_core.plugins import Plugin, PluginRegistry, UnknownOperatorError
-from grafy_plugin_arithmetic import ARITHMETIC
-from grafy_plugin_image import IMAGES
-from grafy_plugin_prompt import PROMPTS
-from grafy_plugin_schema import SCHEMAS
-from grafy_plugin_sequence import SEQUENCES
-from grafy_plugin_table import TABLES
-from grafy_plugin_text import TEXT
+from grafy_workbench import BUILTIN_FAMILIES
 
 from grafy_api.system_host_bindings import LoadedSystemPlugin, SystemHostPluginBinding
-from grafy_api.v1.models import ArtifactTypeBindingModel, PluginReleasePinModel
+from grafy_api.v1.models import ArtifactTypeBindingModel
 from grafy_api.v1.routes.executions.models import RunInputPlugRequest, RunNodeRequest
 
 
-TEST_SYSTEM_PLUGINS: tuple[Plugin, ...] = (
-    IMAGES,
-    SEQUENCES,
-    ARITHMETIC,
-    TEXT,
-    SCHEMAS,
-    PROMPTS,
-    TABLES,
-)
+TEST_SYSTEM_PLUGINS: tuple[Plugin, ...] = BUILTIN_FAMILIES
+TEST_BUILD_DIGEST = "a" * 64
 
 
 def build_explicit_plugin_registry(
@@ -165,19 +134,11 @@ class SelectedSystemPluginDeployment:
         except UnknownOperatorError:
             return node
         if registration.plugin_slug == "graph.module":
-            return node
-        release = next(
-            release
-            for release in self.releases
-            if release.slug == registration.plugin_slug
-        )
+            return node.model_copy(update={"kind": "module", "plugin_release": None})
         return node.model_copy(
             update={
-                "plugin_release": PluginReleasePinModel(
-                    scope=PluginReleaseScope.SYSTEM,
-                    slug=release.slug,
-                    revision=release.revision,
-                )
+                "kind": "builtin",
+                "plugin_release": None,
             }
         )
 
@@ -185,125 +146,14 @@ class SelectedSystemPluginDeployment:
 def build_selected_system_plugin_deployment(
     plugins: Iterable[Plugin] = TEST_SYSTEM_PLUGINS,
 ) -> SelectedSystemPluginDeployment:
-    selected_plugins = tuple(plugins)
-    registry = build_explicit_plugin_registry(selected_plugins)
-    releases: list[InstalledPluginRelease] = []
-    selections: list[PluginReleaseSelection] = []
-    host_bindings: list[SystemHostPluginBinding] = []
-    loaded_plugins: list[LoadedSystemPlugin] = []
-    canonical_conversion_contracts = {
-        (key.id, key.version): PluginArtifactConversionContract.from_conversion(
-            conversion
-        )
-        for key, conversion in CANONICAL_ARTIFACT_CONVERSIONS_BY_KEY.items()
-    }
-    for index, plugin in enumerate(selected_plugins, start=1):
-        plugin_catalog = PluginCatalogManifest.from_plugin(plugin)
-        catalog = plugin_catalog.model_copy(
-            update={
-                "artifact_conversions": tuple(
-                    contract
-                    for contract in plugin_catalog.artifact_conversions
-                    if canonical_conversion_contracts.get(
-                        (contract.key.id, contract.key.version)
-                    )
-                    == contract
-                ),
-            }
-        )
-        required_capabilities = tuple(
-            sorted(
-                {
-                    capability
-                    for node in catalog.nodes
-                    for capability in node.required_capabilities
-                },
-                key=lambda capability: capability.value,
-            )
-        )
-        if any(node.secret_inputs for node in catalog.nodes):
-            required_capabilities = tuple(
-                sorted(
-                    {*required_capabilities, PluginRuntimeCapability.NODE_SECRETS},
-                    key=lambda capability: capability.value,
-                )
-            )
-        capabilities = PluginCapabilityManifest(
-            capabilities=required_capabilities,
-        )
-        digest_character = format(index, "x")
-        runtime_artifact = PluginRuntimeArtifact(
-            object_key=f"test-system-plugins/{plugin.slug}/r1.oci.tar",
-            archive_digest=digest_character * 64,
-            manifest_digest=digest_character * 64,
-            config_digest=digest_character * 64,
-        )
-        loader_target = "tests.support.system_plugins:" + plugin.slug.replace(
-            ".", "_"
-        ).replace("-", "_")
-        release_record = PluginRelease(
-            slug=plugin.slug,
-            revision=1,
-            catalog=catalog,
-            contract_digest=plugin_contract_digest(catalog),
-            capabilities=capabilities,
-            capability_digest=capabilities.digest,
-            protocol_digest=plugin_protocol_digest(),
-            profile_digest=plugin_profile_digest("python-uv"),
-            source_object_key=f"test-system-plugins/{plugin.slug}/r1.tar.gz",
-            source_digest=digest_character * 64,
-            lock_digest=digest_character * 64,
-            runtime_profile="python-uv",
-            loader_target=loader_target,
-            runtime_image_digest=runtime_artifact.manifest_digest,
-            runtime_artifact=runtime_artifact,
-            published_by_platform_actor="test:system",
-        )
-        release = InstalledPluginRelease(
-            release=release_record,
-            installation=PluginInstallation.from_release(
-                release_record,
-                namespace=PluginReleaseNamespace(
-                    scope=PluginReleaseScope.SYSTEM,
-                    workspace_id=None,
-                ),
-                execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-                distribution=PluginDistribution.BUNDLED,
-                installed_by_user_id=None,
-                installed_by_platform_actor="test:system",
-            ),
-        )
-        selection = PluginReleaseSelection.from_release(release)
-        releases.append(release)
-        selections.append(selection)
-        host_build_digest = digest_character * 64
-        host_bindings.append(
-            SystemHostPluginBinding.from_release(
-                release,
-                selection_generation=selection.generation,
-                loader_target=loader_target,
-                host_build_digest=host_build_digest,
-            )
-        )
-        loaded_plugins.append(
-            LoadedSystemPlugin(
-                slug=release.slug,
-                loader_target=loader_target,
-                host_build_digest=host_build_digest,
-            )
-        )
-    frozen_releases = tuple(releases)
-    frozen_selections = tuple(selections)
+    registry = build_explicit_plugin_registry(plugins)
     return SelectedSystemPluginDeployment(
         registry=registry,
-        releases=frozen_releases,
-        selections=frozen_selections,
-        host_bindings=tuple(host_bindings),
-        loaded_plugins=tuple(loaded_plugins),
-        release_lookup=SelectedSystemReleaseLookup(
-            frozen_releases,
-            frozen_selections,
-        ),
+        releases=(),
+        selections=(),
+        host_bindings=(),
+        loaded_plugins=(),
+        release_lookup=SelectedSystemReleaseLookup((), ()),
     )
 
 
@@ -325,11 +175,8 @@ def pin_selected_system_nodes(
         pinned_nodes.append(
             node.model_copy(
                 update={
-                    "plugin_release": PluginReleasePinModel(
-                        scope=PluginReleaseScope.SYSTEM,
-                        slug=slug,
-                        revision=1,
-                    )
+                    "kind": "builtin",
+                    "plugin_release": None,
                 }
             )
         )
@@ -345,26 +192,12 @@ def selected_system_run_node(
     input_plugs: list[RunInputPlugRequest] | None = None,
     artifact_type_bindings: list[ArtifactTypeBindingModel] | None = None,
     plugin_slug: str | None = None,
+    kind: str | None = None,
+    plugin_release: object | None = None,
 ) -> RunNodeRequest:
-    resolved_slug = plugin_slug
-    if resolved_slug is None:
-        resolved_slug = next(
-            (
-                plugin.slug
-                for plugin in TEST_SYSTEM_PLUGINS
-                if any(
-                    registration.key == (operator_id, operator_version)
-                    for registration in plugin.nodes
-                )
-            ),
-            None,
-        )
-    if resolved_slug is None:
-        raise ValueError(
-            f"Test operator {operator_id}@{operator_version} requires an explicit "
-            "selected System Plugin slug"
-        )
+    del plugin_slug, kind, plugin_release
     return RunNodeRequest(
+        kind="builtin",
         id=id,
         operator_id=operator_id,
         operator_version=operator_version,
@@ -373,15 +206,11 @@ def selected_system_run_node(
         artifact_type_bindings=(
             [] if artifact_type_bindings is None else artifact_type_bindings
         ),
-        plugin_release=PluginReleasePinModel(
-            scope=PluginReleaseScope.SYSTEM,
-            slug=resolved_slug,
-            revision=1,
-        ),
     )
 
 
 __all__ = [
+    "TEST_BUILD_DIGEST",
     "TEST_SYSTEM_PLUGINS",
     "SelectedSystemPluginDeployment",
     "SelectedSystemReleaseLookup",

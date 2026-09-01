@@ -15,12 +15,6 @@ class PluginExecutionPolicy(StrEnum):
     ISOLATED_ONLY = "isolated-only"
 
 
-class PluginDistribution(StrEnum):
-    BUNDLED = "bundled"
-    OPTIONAL = "optional"
-    PUBLISHED = "published"
-
-
 @dataclass(frozen=True, slots=True)
 class PlatformPluginActor:
     """Non-secret deployment identity authorized to manage System Plugins."""
@@ -66,7 +60,6 @@ class PluginReleaseNamespace:
 
 __all__ = [
     "PlatformPluginActor",
-    "PluginDistribution",
     "PluginExecutionPolicy",
     "PluginReleaseNamespace",
     "PluginReleaseScope",

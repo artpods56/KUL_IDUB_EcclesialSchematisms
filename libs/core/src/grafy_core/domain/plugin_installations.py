@@ -7,7 +7,6 @@ from uuid import UUID, uuid4
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.domain.plugin_identity import (
     PlatformPluginActor,
-    PluginDistribution,
     PluginExecutionPolicy,
     PluginReleaseNamespace,
     PluginReleaseScope,
@@ -32,7 +31,6 @@ class PluginInstallation:
     slug: str
     release_revision: int
     execution_policy: PluginExecutionPolicy
-    distribution: PluginDistribution | None
     installed_by_user_id: UUID | None = None
     installed_by_platform_actor: str | None = None
     installed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -41,8 +39,6 @@ class PluginInstallation:
     def __post_init__(self) -> None:
         self.scope = PluginReleaseScope(self.scope)
         self.execution_policy = PluginExecutionPolicy(self.execution_policy)
-        if self.distribution is not None:
-            self.distribution = PluginDistribution(self.distribution)
         try:
             PluginReleaseNamespace(
                 scope=self.scope,
@@ -77,14 +73,6 @@ class PluginInstallation:
                 raise PluginReleaseError(
                     "Workspace Plugin installations must use isolated-only execution"
                 )
-        if self.scope is PluginReleaseScope.SYSTEM and self.distribution is None:
-            raise PluginReleaseError(
-                "System Plugin installations require distribution metadata"
-            )
-        if self.scope is PluginReleaseScope.WORKSPACE and self.distribution is not None:
-            raise PluginReleaseError(
-                "Workspace Plugin installations cannot declare System distribution metadata"
-            )
         if self.slug.strip() == "" or len(self.slug) > 100:
             raise PluginReleaseError(
                 "Plugin installation slug must contain 1 to 100 characters"
@@ -103,7 +91,6 @@ class PluginInstallation:
         *,
         namespace: PluginReleaseNamespace,
         execution_policy: PluginExecutionPolicy,
-        distribution: PluginDistribution | None,
         installed_by_user_id: UUID | None,
         installed_by_platform_actor: str | None,
     ) -> "PluginInstallation":
@@ -114,7 +101,6 @@ class PluginInstallation:
             slug=release.slug,
             release_revision=release.revision,
             execution_policy=execution_policy,
-            distribution=distribution,
             installed_by_user_id=installed_by_user_id,
             installed_by_platform_actor=installed_by_platform_actor,
         )
@@ -187,10 +173,6 @@ class InstalledPluginRelease:
     @property
     def execution_policy(self) -> PluginExecutionPolicy:
         return self.installation.execution_policy
-
-    @property
-    def distribution(self) -> PluginDistribution | None:
-        return self.installation.distribution
 
     @property
     def runtime_artifact(self) -> PluginRuntimeArtifact | None:

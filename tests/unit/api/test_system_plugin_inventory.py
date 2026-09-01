@@ -24,7 +24,6 @@ from grafy_api.system_plugin_loader import (
     SystemPluginDeploymentEntry,
     SystemPluginDeploymentManifest,
 )
-from grafy_core.artifact_contracts import INTEGER_VALUE, TEXT_VALUE
 from grafy_core.canonical_conversions import INTEGER_TO_TEXT
 from grafy_core.domain.plugin_releases import (
     PluginArtifactConversionContract,
@@ -119,7 +118,6 @@ def _release(
                 workspace_id=None,
             ),
             execution_policy=entry.execution_policy,
-            distribution=entry.distribution,
             installed_by_user_id=None,
             installed_by_platform_actor="test:inventory",
         ),
@@ -167,7 +165,7 @@ def test_checked_in_system_inventory_is_complete_finite_and_excludes_modules() -
 
     assert {plugin.slug for plugin in inventory.plugins} == SYSTEM_PLUGIN_SLUGS
     assert "builtin.module" not in SYSTEM_PLUGIN_SLUGS
-    assert len(inventory.plugins) == 11
+    assert len(inventory.plugins) == 4
     assert next(
         plugin for plugin in inventory.plugins if plugin.slug == "external.sql"
     ).capabilities == (
@@ -182,18 +180,8 @@ def test_checked_in_system_inventory_is_complete_finite_and_excludes_modules() -
         )
         for entry in inventory.plugins
     } == {
-        "builtin.arithmetic": (("arithmetic",), ("scalar.integer",)),
-        "builtin.image": (("image",), ("image.raster",)),
-        "builtin.prompt": (("prompt",), ("prompt.message",)),
-        "builtin.schema": (("schema",), ("json.schema",)),
-        "builtin.sequence": (("sequence",), ()),
-        "builtin.table": (("table",), ("table.data",)),
-        "builtin.text": (
-            ("text",),
-            ("scalar.text", "text.markdown"),
-        ),
         "external.gis": (("gis",), ("geo",)),
-        "external.llm": (("llm",), ("llm",)),
+        "external.llm": (("llm", "prompt"), ("llm", "prompt.message")),
         "external.ocr": (("ocr",), ("ocr",)),
         "external.sql": (("sql",), ("sql",)),
     }
@@ -238,17 +226,17 @@ def test_inventory_enforces_explicit_system_identity_authority() -> None:
         if entry.slug == "external.ocr"
     )
     entries[ocr_position] = entries[ocr_position].model_copy(
-        update={"operator_prefixes": ("ocr", "table.markdown")}
+        update={"operator_prefixes": ("ocr", "sql.query")}
     )
     delegating_inventory = inventory.model_copy(
         update={"plugins": tuple(entries)}
     )
 
     delegated = PluginCatalogManifest(
-        slug="builtin.table",
-        title="Table",
+        slug="external.sql",
+        title="SQL",
         nodes=(
-            _node_contract("table.markdown.extract", "Markdown tables"),
+            _node_contract("sql.query", "Query"),
         ),
     )
     with pytest.raises(SystemPluginInventoryError, match="delegated.*external.ocr"):
@@ -275,27 +263,8 @@ def test_inventory_accepts_each_preserved_external_catalog(plugin: Plugin) -> No
 def test_inventory_requires_exact_canonical_conversion_contracts() -> None:
     inventory = load_system_plugin_inventory(INVENTORY_PATH)
     canonical = PluginArtifactConversionContract.from_conversion(INTEGER_TO_TEXT)
-    catalog = PluginCatalogManifest(
-        slug="builtin.text",
-        title="Text",
-        artifact_types=(PluginArtifactTypeContract.from_spec(TEXT_VALUE),),
-        artifact_type_dependencies=(
-            PluginArtifactTypeContract.from_spec(INTEGER_VALUE),
-        ),
-        artifact_conversions=(canonical,),
-        nodes=(
-            PluginNodeContract(
-                operator_id="text.input",
-                operator_version=1,
-                title="Text",
-                description="Text input.",
-                config_schema={"type": "object"},
-                input_schema={"type": "object"},
-                output_schema={"type": "object"},
-                inputs=(),
-                outputs=(),
-            ),
-        ),
+    catalog = PluginCatalogManifest.from_plugin(LLM).model_copy(
+        update={"artifact_conversions": (canonical,)}
     )
 
     inventory.require_catalog_authority(catalog)
@@ -402,22 +371,25 @@ async def test_generator_resolves_exact_releases_and_host_bindings_idempotently(
         deployment_manifest_path=deployment_path,
         output=output,
     )
-    assert written.release_count == 11
+    assert written.release_count == 4
     assert output.read_bytes() == canonical_model_json_bytes(first)
     assert load_system_baseline_manifest(output) == first
 
+    unexpected_binding = SystemHostPluginBinding.from_release(
+        releases["external.sql"],
+        selection_generation=1,
+        loader_target=entries_by_slug["external.sql"].loader_target,
+        host_build_digest=sha256(b"host:external.sql").hexdigest(),
+    )
     with pytest.raises(SystemPluginInventoryError, match="unique slugs"):
         await generator.generate(
             inventory,
-            host_bindings=(*bindings, bindings[0]),
+            host_bindings=(unexpected_binding, unexpected_binding),
         )
-    mismatched_binding = bindings[0].model_copy(
-        update={"loader_target": "wrong.deployment:PLUGIN"}
-    )
-    with pytest.raises(SystemPluginInventoryError, match="loader target"):
+    with pytest.raises(SystemPluginInventoryError, match="unexpected"):
         await generator.generate(
             inventory,
-            host_bindings=(mismatched_binding, *bindings[1:]),
+            host_bindings=(unexpected_binding,),
         )
 
 
@@ -447,11 +419,7 @@ async def test_generator_refuses_missing_selection_and_inventory_release_mismatc
         entries = list(inventory.plugins)
         first = entries[0]
         mismatched_entry = first.model_copy(
-            update={
-                "distribution": (
-                    "optional" if first.distribution == "bundled" else "bundled"
-                )
-            }
+            update={"execution_policy": "host-eligible"}
         )
         entries[0] = mismatched_entry
         mismatched_inventory = inventory.model_copy(update={"plugins": tuple(entries)})
@@ -466,7 +434,7 @@ async def test_generator_refuses_missing_selection_and_inventory_release_mismatc
                     PluginReleaseSelection.from_release(release)
                 )
             await unit_of_work.commit()
-        with pytest.raises(SystemPluginInventoryError, match="distribution"):
+        with pytest.raises(SystemPluginInventoryError, match="execution policy"):
             await SystemBaselineManifestGenerator(database_two.sessions).generate(
                 mismatched_inventory
             )

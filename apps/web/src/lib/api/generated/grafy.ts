@@ -2419,6 +2419,12 @@ export interface components {
             readonly operator_id: string;
             /** Operator Version */
             readonly operator_version: number;
+            /**
+             * Origin
+             * @default plugin
+             * @enum {string}
+             */
+            readonly origin: "builtin" | "plugin" | "module";
             /** Output Schema */
             readonly output_schema: {
                 readonly [key: string]: unknown;
@@ -2539,11 +2545,6 @@ export interface components {
             /** Value */
             readonly value: components["schemas"]["ArtifactRef"] | components["schemas"]["ArtifactRefSequence"];
         };
-        /**
-         * PluginDistribution
-         * @enum {string}
-         */
-        readonly PluginDistribution: "bundled" | "optional" | "published";
         /** PluginReleasePinModel */
         readonly PluginReleasePinModel: {
             /** Revision */
@@ -2559,18 +2560,26 @@ export interface components {
         readonly PluginReleaseScope: "system" | "workspace";
         /** PluginSpecResponse */
         readonly PluginSpecResponse: {
-            readonly distribution?: components["schemas"]["PluginDistribution"] | null;
             /**
              * Entry Kind
              * @default plugin
              * @enum {string}
              */
             readonly entry_kind: "plugin" | "module";
+            readonly installation_scope?: components["schemas"]["PluginReleaseScope"] | null;
             /** Non Runnable Detail */
             readonly non_runnable_detail?: string | null;
             /** Non Runnable Reason */
             readonly non_runnable_reason?: ("revoked" | "missing_runtime_artifact" | "incompatible_protocol" | "unsupported_runtime_profile" | "unsupported_capabilities" | "unsupported_artifact_type" | "plugin_runtime_unavailable" | "host_binding_mismatch" | "network_profile_unassigned" | "network_profile_disabled" | "network_destination_undeclared" | "network_dynamic_destination_denied" | "network_destination_not_allowlisted" | "network_origin_limit_exceeded") | ("deprecated" | "withdrawn") | null;
+            /**
+             * Origin
+             * @default plugin
+             * @enum {string}
+             */
+            readonly origin: "builtin" | "plugin" | "module";
             readonly plugin_release?: components["schemas"]["PluginReleasePinModel"] | null;
+            /** Publisher */
+            readonly publisher?: string | null;
             /** Revision */
             readonly revision?: number | null;
             /**
@@ -2783,6 +2792,11 @@ export interface components {
             readonly id: string;
             /** Input Plugs */
             readonly input_plugs?: readonly components["schemas"]["RunInputPlugRequest"][];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "builtin" | "plugin" | "module";
             /** Operator Id */
             readonly operator_id: string;
             /** Operator Version */
@@ -2906,10 +2920,10 @@ export interface components {
             readonly presentation?: components["schemas"]["GraphPresentationDocument"];
             /**
              * Schema Version
-             * @default 5
+             * @default 6
              * @constant
              */
-            readonly schema_version: 5;
+            readonly schema_version: 6;
         };
         /** SavedGraphEdge */
         readonly SavedGraphEdge: {
@@ -3016,6 +3030,11 @@ export interface components {
              * @default []
              */
             readonly input_plugs: readonly components["schemas"]["SavedGraphInputPlug"][];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "builtin" | "plugin" | "module";
             readonly layout?: components["schemas"]["SavedGraphNodeLayout"] | null;
             /** Operator Id */
             readonly operator_id: string;
@@ -3057,6 +3076,11 @@ export interface components {
             readonly id: string;
             /** Input Plugs */
             readonly input_plugs?: readonly components["schemas"]["SavedGraphInputPlugModel"][];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "builtin" | "plugin" | "module";
             readonly layout?: components["schemas"]["SavedGraphNodeLayoutModel"] | null;
             /** Operator Id */
             readonly operator_id: string;

@@ -4,15 +4,15 @@ from unittest.mock import Mock
 import pytest
 
 from grafy_core.plugin_inspector import inspect_plugin
-from grafy_plugin_text import TEXT
+from grafy_workbench.text import TEXT
 
 import grafy_core.plugin_inspector as plugin_inspector
 
 
 def test_inspector_loads_a_real_converged_system_family_package() -> None:
-    inspected = inspect_plugin("grafy_plugin_text.plugin:TEXT")
+    inspected = inspect_plugin("grafy_workbench.text.plugin:TEXT")
 
-    assert inspected.catalog.slug == "builtin.text"
+    assert inspected.catalog.slug == "text"
     assert inspected.catalog.title == TEXT.title
 
 
@@ -26,5 +26,5 @@ def test_inspector_defaults_to_the_fixed_workspace_package(
 
     inspected = inspect_plugin()
 
-    assert inspected.catalog.slug == "builtin.text"
+    assert inspected.catalog.slug == "text"
     importer.assert_called_once_with("grafy_plugin")

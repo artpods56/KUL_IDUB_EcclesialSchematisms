@@ -29,7 +29,6 @@ from grafy_core.domain.plugin_releases import (
     PluginArtifactTypeKey,
     PluginCapabilityManifest,
     PluginCatalogManifest,
-    PluginDistribution,
     PluginExecutionPolicy,
     PluginNodeContract,
     PluginRelease,
@@ -51,9 +50,9 @@ from grafy_core.artifact_contracts import (
     TextValue,
 )
 from grafy_core.prompt_contracts import PROMPT_MESSAGE
-from grafy_plugin_arithmetic import ARITHMETIC
-from grafy_plugin_table import TABLES
-from grafy_plugin_text import TEXT
+from grafy_workbench.arithmetic import ARITHMETIC
+from grafy_workbench.table import TABLES
+from grafy_workbench.text import TEXT
 from grafy_core.plugins import Plugin
 
 
@@ -524,7 +523,6 @@ def test_installation_scope_requires_exactly_the_matching_workspace_owner() -> N
                 workspace_id=None,
             ),
             execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
-            distribution=None,
             installed_by_user_id=UUID(int=1),
             installed_by_platform_actor=None,
         )
@@ -536,7 +534,6 @@ def test_installation_scope_requires_exactly_the_matching_workspace_owner() -> N
                 workspace_id=UUID(int=1),
             ),
             execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-            distribution=PluginDistribution.BUNDLED,
             installed_by_user_id=None,
             installed_by_platform_actor="test:system",
         )
@@ -548,7 +545,6 @@ def test_installation_scope_requires_exactly_the_matching_workspace_owner() -> N
                 workspace_id=UUID(int=1),
             ),
             execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-            distribution=None,
             installed_by_user_id=UUID(int=1),
             installed_by_platform_actor=None,
         )
@@ -560,7 +556,6 @@ def test_installation_scope_requires_exactly_the_matching_workspace_owner() -> N
             workspace_id=None,
         ),
         execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-        distribution=PluginDistribution.BUNDLED,
         installed_by_user_id=None,
         installed_by_platform_actor="test:system",
     )
@@ -568,7 +563,6 @@ def test_installation_scope_requires_exactly_the_matching_workspace_owner() -> N
     assert system.namespace.scope is PluginReleaseScope.SYSTEM
     assert system.namespace.storage_path == "system"
     assert system.execution_policy is PluginExecutionPolicy.HOST_ELIGIBLE
-    assert system.distribution is PluginDistribution.BUNDLED
 
 
 def test_untrusted_artifact_query_cannot_gain_network_secrets_or_native_access() -> None:

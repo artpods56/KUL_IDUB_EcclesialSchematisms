@@ -2,11 +2,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal
+
 from uuid import UUID
 
 from grafy_core.artifacts import ArtifactFieldProjection, ArtifactTypeKey
 from grafy_core.conversions import ArtifactConversion
 from grafy_core.domain.artifact_outputs import ArtifactOutputValue
+from grafy_core.domain.implementation import ImplementationIdentity
 from grafy_core.domain.plugin_releases import PluginReleaseIdentity
 from grafy_core.nodes import Node, ResolvedNodeContracts
 from grafy_core.plugins import NodeRegistration
@@ -35,6 +37,8 @@ class CompiledNode:
     invocation: NodeInvocation
     artifact_type_bindings: Mapping[str, ArtifactTypeKey]
     plugin_release: PluginReleaseIdentity | None = None
+    implementation: ImplementationIdentity | None = None
+    execution_target: Literal["in_process", "isolated"] = "in_process"
 
     def __post_init__(self) -> None:
         object.__setattr__(

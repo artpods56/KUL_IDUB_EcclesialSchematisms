@@ -65,6 +65,7 @@ def _source_revision_document() -> SavedGraphDocument:
     return SavedGraphDocument(
         nodes=(
             SavedGraphNode(
+                kind="builtin",
                 id="source",
                 operator_id="example.operator",
                 operator_version=1,
@@ -90,6 +91,7 @@ async def _seed_templates(database_url: str) -> None:
     revision_two_document = SavedGraphDocument(
         nodes=(
             SavedGraphNode(
+                kind="builtin",
                 id="changed-later",
                 operator_id="example.operator",
                 operator_version=1,
@@ -116,6 +118,7 @@ async def _seed_templates(database_url: str) -> None:
         document=SavedGraphDocument(
             nodes=(
                 SavedGraphNode(
+                    kind="builtin",
                     id="module-call",
                     operator_id=f"graph.module.{DESTINATION_WORKSPACE_ID}",
                     operator_version=1,

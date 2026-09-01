@@ -557,6 +557,14 @@ def apply_graph_command(
 
     if isinstance(command, UpdateNodePluginReleaseCommand):
         node = _node_or_raise(document, command.node_id)
+        if node.kind != "plugin":
+            raise CollaborationCommandRejectedError(
+                code="invalid_plugin_release_update",
+                message=(
+                    f"Plugin release update on node {command.node_id} is only "
+                    "valid for Plugin nodes"
+                ),
+            )
         current_pin = node.plugin_release_pin
         expected_pin = command.expected_plugin_release_pin
         if current_pin != expected_pin:

@@ -3705,6 +3705,16 @@
             "title": "Operator Version",
             "type": "integer"
           },
+          "origin": {
+            "default": "plugin",
+            "enum": [
+              "builtin",
+              "plugin",
+              "module"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
           "output_schema": {
             "additionalProperties": true,
             "title": "Output Schema",
@@ -4026,15 +4036,6 @@
         "title": "PinnedOutputRequest",
         "type": "object"
       },
-      "PluginDistribution": {
-        "enum": [
-          "bundled",
-          "optional",
-          "published"
-        ],
-        "title": "PluginDistribution",
-        "type": "string"
-      },
       "PluginReleasePinModel": {
         "additionalProperties": false,
         "properties": {
@@ -4071,16 +4072,6 @@
       },
       "PluginSpecResponse": {
         "properties": {
-          "distribution": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PluginDistribution"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "entry_kind": {
             "default": "plugin",
             "enum": [
@@ -4089,6 +4080,16 @@
             ],
             "title": "Entry Kind",
             "type": "string"
+          },
+          "installation_scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginReleaseScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "non_runnable_detail": {
             "anyOf": [
@@ -4135,6 +4136,16 @@
             ],
             "title": "Non Runnable Reason"
           },
+          "origin": {
+            "default": "plugin",
+            "enum": [
+              "builtin",
+              "plugin",
+              "module"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
           "plugin_release": {
             "anyOf": [
               {
@@ -4144,6 +4155,17 @@
                 "type": "null"
               }
             ]
+          },
+          "publisher": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher"
           },
           "revision": {
             "anyOf": [
@@ -4722,6 +4744,15 @@
             "title": "Input Plugs",
             "type": "array"
           },
+          "kind": {
+            "enum": [
+              "builtin",
+              "plugin",
+              "module"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
           "operator_id": {
             "title": "Operator Id",
             "type": "string"
@@ -4742,6 +4773,7 @@
           }
         },
         "required": [
+          "kind",
           "id",
           "operator_id",
           "operator_version"
@@ -5088,8 +5120,8 @@
             "$ref": "#/components/schemas/GraphPresentationDocument"
           },
           "schema_version": {
-            "const": 5,
-            "default": 5,
+            "const": 6,
+            "default": 6,
             "title": "Schema Version",
             "type": "integer"
           }
@@ -5403,6 +5435,15 @@
             "title": "Input Plugs",
             "type": "array"
           },
+          "kind": {
+            "enum": [
+              "builtin",
+              "plugin",
+              "module"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
           "layout": {
             "anyOf": [
               {
@@ -5439,6 +5480,7 @@
           }
         },
         "required": [
+          "kind",
           "id",
           "operator_id",
           "operator_version",
@@ -5568,6 +5610,15 @@
             "title": "Input Plugs",
             "type": "array"
           },
+          "kind": {
+            "enum": [
+              "builtin",
+              "plugin",
+              "module"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
           "layout": {
             "anyOf": [
               {
@@ -5604,6 +5655,7 @@
           }
         },
         "required": [
+          "kind",
           "id",
           "operator_id",
           "operator_version",

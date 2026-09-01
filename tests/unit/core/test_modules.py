@@ -82,6 +82,7 @@ def _boundary(
     if required is not None:
         config["required"] = required
     return SavedGraphNode(
+        kind="builtin",
         id=node_id,
         operator_id=operator_id,
         operator_version=version,
@@ -159,6 +160,7 @@ def _optional_definition() -> GraphModuleDefinition:
                         required=False,
                     ),
                     SavedGraphNode(
+                        kind="builtin",
                         id="optional-consumer",
                         operator_id="example.optional-consumer",
                         operator_version=1,

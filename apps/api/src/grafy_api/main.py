@@ -17,6 +17,8 @@ from grafy_core.application.identity import IdentityService
 from grafy_core.operators.modules import MODULE_BOUNDARY_REGISTRATIONS
 from grafy_core.plugins import PluginRegistry
 
+from grafy_workbench import BuiltinNodeCatalog
+
 from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import (
     SqlAlchemySavedGraphUnitOfWork,
@@ -30,10 +32,6 @@ from grafy_api.services.composition import build_workbench_components
 from grafy_api.settings import Settings, get_settings
 from grafy_api.single_owner import ApiOwnerLease
 from grafy_api.storage import configured_file_storage
-from grafy_api.system_plugin_loader import (
-    LoadedSystemPluginDeployment,
-    load_system_plugin_deployment_file,
-)
 from grafy_api.v1.routes.auth.services import AuthService
 from grafy_api.v1.routes.auth.views import router as auth_router
 from grafy_api.v1.routes.artifacts.views import router as artifacts_router
@@ -75,24 +73,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     resolved_settings.workspace / ".grafy-api-owner.lock"
                 )
                 owner_lease.acquire()
-            loaded_deployment = LoadedSystemPluginDeployment(
-                plugins=(),
-                loaded_plugins=(),
-                bindings=(),
+            builtin_catalog = BuiltinNodeCatalog.load(
+                resolved_settings.resolved_build_digest
             )
-            deployment_manifest = (
-                resolved_settings.resolved_system_plugin_deployment_manifest
-            )
-            if deployment_manifest is not None:
-                loaded_deployment = load_system_plugin_deployment_file(
-                    deployment_manifest
-                )
-
-            registry = PluginRegistry()
-            registry.register_module_boundaries(MODULE_BOUNDARY_REGISTRATIONS)
-            for plugin in loaded_deployment.plugins:
-                registry.install(plugin)
-            registry.freeze()
+            registry = builtin_catalog.registry
             storage = configured_file_storage(resolved_settings)
             saved_graphs = SavedGraphService(
                 lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
@@ -185,11 +169,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 module_library=module_library,
                 plugin_releases=plugin_releases,
                 plugin_runtime=plugin_runtime,
-                system_host_bindings=loaded_deployment.bindings,
-                loaded_system_plugins=loaded_deployment.loaded_plugins,
                 node_secrets=node_secrets,
                 graph_room_hub=graph_room_hub,
                 network_policy=network_policy,
+                build_digest=resolved_settings.resolved_build_digest,
             )
             resources = AppResources(
                 database=database,

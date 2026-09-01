@@ -224,8 +224,6 @@ def module_client(tmp_path: Path) -> Iterator[TestClient]:
         module_library=module_library,
         node_secrets=node_secrets,
         plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
-        system_host_bindings=deployment.host_bindings,
-        loaded_system_plugins=deployment.loaded_plugins,
     )
     overrides = {
         **workbench_dependency_overrides(components),
@@ -721,7 +719,6 @@ def test_saved_graph_module_is_discoverable_and_executes_once(
         "title": "Workspace library",
         "entry_kind": "module",
         "scope": None,
-        "distribution": None,
         "plugin_release": None,
         "revision": None,
         "runnable": True,
@@ -744,12 +741,14 @@ def test_saved_graph_module_is_discoverable_and_executes_once(
         json=_system_run_request(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="source",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "a cat"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="module",
                     operator_id=module_spec["operator_id"],
                     operator_version=1,
@@ -792,18 +791,21 @@ def test_execution_events_route_nested_nodes_to_each_module_instance(
         json=_system_run_request(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="source",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "a cat"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="module-one",
                     operator_id=operator_id,
                     operator_version=1,
                     config={},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="module-two",
                     operator_id=operator_id,
                     operator_version=1,
@@ -872,18 +874,21 @@ def test_mapped_module_events_keep_the_outer_invocation_identity(
         json=_system_run_request(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="source",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "a|ba|ca"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="split",
                     operator_id="text.split",
                     operator_version=1,
                     config={"separator": "|"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="module",
                     operator_id=operator_id,
                     operator_version=1,
@@ -944,18 +949,21 @@ def test_nested_map_events_append_each_local_invocation_index(
         json=_system_run_request(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="source",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "a,b|ca,da"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="split",
                     operator_id="text.split",
                     operator_version=1,
                     config={"separator": "|"},
                 ),
                 RunNodeRequest(
+                    kind="module",
                     id="module",
                     operator_id=f"graph.module.{created['id']}",
                     operator_version=1,
@@ -1028,18 +1036,21 @@ def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
         json=_system_run_request(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="source",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "a|ba|ca"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="split",
                     operator_id="text.split",
                     operator_version=1,
                     config={"separator": "|"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="module",
                     operator_id=operator_id,
                     operator_version=1,
@@ -1105,12 +1116,14 @@ def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
         json=_system_run_request(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="source",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "a"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="module",
                     operator_id=operator_id,
                     operator_version=1,
@@ -1166,12 +1179,14 @@ def test_nested_module_omits_absent_optional_input_and_disabled_edges(
         json=_system_run_request(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="source",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "hello"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="module",
                     operator_id=module_spec["operator_id"],
                     operator_version=module_spec["operator_version"],
@@ -1201,18 +1216,21 @@ def test_nested_module_omits_absent_optional_input_and_disabled_edges(
         json=_system_run_request(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="text-source",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "hello"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="suffix-source",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "!"},
                 ),
                 RunNodeRequest(
+                    kind="builtin",
                     id="module",
                     operator_id=module_spec["operator_id"],
                     operator_version=module_spec["operator_version"],
@@ -1282,6 +1300,7 @@ def test_module_catalog_rejects_optional_input_targeting_required_input(
         json=_system_run_request(
             nodes=[
                 RunNodeRequest(
+                    kind="module",
                     id="module",
                     operator_id=f"graph.module.{graph_id}",
                     operator_version=1,
@@ -1390,6 +1409,7 @@ def test_graph_module_required_input_is_rejected_by_compiler(
         json=_system_run_request(
             nodes=[
                 RunNodeRequest(
+                    kind="module",
                     id="module",
                     operator_id=f"graph.module.{created['id']}",
                     operator_version=created["revision"],
@@ -1444,12 +1464,14 @@ def test_nested_module_resolves_secret_from_its_own_pinned_graph(
         json=_system_run_request(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="source",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "request"},
                 ),
                 RunNodeRequest(
+                    kind="module",
                     id="module",
                     operator_id=f"graph.module.{graph_id}",
                     operator_version=1,
@@ -1524,12 +1546,14 @@ def test_exact_module_revision_cycle_reports_the_nested_path(
         json=_system_run_request(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="source",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "a"},
                 ),
                 RunNodeRequest(
+                    kind="module",
                     id="module",
                     operator_id=f"graph.module.{first['id']}",
                     operator_version=2,
@@ -1583,12 +1607,14 @@ def test_withdrawn_module_stays_executable_for_pinned_calls(
         json=_system_run_request(
             nodes=[
                 RunNodeRequest(
+                    kind="builtin",
                     id="source",
                     operator_id="text.input",
                     operator_version=1,
                     config={"text": "a"},
                 ),
                 RunNodeRequest(
+                    kind="module",
                     id="module",
                     operator_id=f"graph.module.{graph_id}",
                     operator_version=1,

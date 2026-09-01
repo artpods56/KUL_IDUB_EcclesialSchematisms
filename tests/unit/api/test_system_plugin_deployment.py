@@ -8,7 +8,6 @@ from grafy_api.system_plugin_deployment import (
     SystemPluginDeploymentBuildError,
     SystemPluginDeploymentManifestBuilder,
 )
-from grafy_api.system_plugin_loader import SystemPluginDeploymentManifest
 from grafy_api.system_plugin_inventory import (
     CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH,
     SystemPluginInventory,
@@ -38,7 +37,7 @@ from grafy_core.domain.plugin_installations import (
 from grafy_core.domain.plugin_selection import PluginReleaseSelection
 from grafy_persistence.database import Database, create_database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
-from grafy_plugin_text.plugin import TEXT
+from grafy_plugin_llm import LLM
 from tests.support.identity import create_schema
 
 
@@ -47,14 +46,6 @@ REPOSITORY_ROOT = CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH.parents[1]
 
 def _mismatched_host_digest(_distribution_name: str) -> str:
     return "f" * 64
-
-
-def _constant_wheel_digest(_wheel: Path, _distribution_name: str) -> str:
-    return "f" * 64
-
-
-def _skipped_deployment_load(_manifest: SystemPluginDeploymentManifest) -> None:
-    del _manifest
 
 
 def _project_digests(
@@ -76,12 +67,12 @@ def _release(
     catalog: PluginCatalogManifest | None = None,
     repository_root: Path = REPOSITORY_ROOT,
 ) -> InstalledPluginRelease:
-    entry = inventory.entry_for("builtin.text")
+    entry = inventory.entry_for("external.llm")
     source_digest, lock_digest = _project_digests(entry, repository_root)
-    release_catalog = catalog or PluginCatalogManifest.from_plugin(TEXT)
+    release_catalog = catalog or PluginCatalogManifest.from_plugin(LLM)
     capabilities = PluginCapabilityManifest(capabilities=entry.capabilities)
     runtime_artifact = PluginRuntimeArtifact(
-        object_key=f"plugin-releases/system/builtin.text/{revision}.oci.tar",
+        object_key=f"plugin-releases/system/external.llm/{revision}.oci.tar",
         archive_digest=sha256(f"archive:{revision}".encode()).hexdigest(),
         manifest_digest=sha256(f"manifest:{revision}".encode()).hexdigest(),
         config_digest=sha256(f"config:{revision}".encode()).hexdigest(),
@@ -95,7 +86,7 @@ def _release(
         capability_digest=capabilities.digest,
         protocol_digest=plugin_protocol_digest(),
         profile_digest=plugin_profile_digest("python-uv"),
-        source_object_key=f"plugin-releases/system/builtin.text/{revision}.tar.gz",
+        source_object_key=f"plugin-releases/system/external.llm/{revision}.tar.gz",
         source_digest=source_digest,
         lock_digest=lock_digest,
         runtime_profile="python-uv",
@@ -113,7 +104,6 @@ def _release(
                 workspace_id=None,
             ),
             execution_policy=entry.execution_policy,
-            distribution=entry.distribution,
             installed_by_user_id=None,
             installed_by_platform_actor="test:deployment",
         ),
@@ -175,7 +165,6 @@ def _isolated_release(inventory: SystemPluginInventory) -> InstalledPluginReleas
                 workspace_id=None,
             ),
             execution_policy=entry.execution_policy,
-            distribution=entry.distribution,
             installed_by_user_id=None,
             installed_by_platform_actor="test:deployment",
         ),
@@ -245,7 +234,6 @@ def _inventory_release(
                 workspace_id=None,
             ),
             execution_policy=entry.execution_policy,
-            distribution=entry.distribution,
             installed_by_user_id=None,
             installed_by_platform_actor="test:deployment",
         ),
@@ -318,10 +306,7 @@ async def test_builder_writes_exact_idempotent_manifest_for_absent_selection(
 
     assert first == second
     assert output.read_bytes() == first_bytes
-    assert len(first.plugins) == 1
-    binding = first.plugins[0].binding
-    assert binding.release_id == release.id
-    assert binding.selection_generation == 1
+    assert first.plugins == ()
 
 
 @pytest.mark.asyncio
@@ -352,34 +337,32 @@ async def test_builder_retains_generation_for_same_selection_and_increments_chan
         revision=second_release.revision,
     )
 
-    assert same.plugins[0].binding.selection_generation == 1
-    assert changed.plugins[0].binding.selection_generation == 2
+    assert same.plugins == ()
+    assert changed.plugins == ()
 
 
 @pytest.mark.asyncio
-async def test_builder_rejects_release_catalog_that_differs_from_installed_target(
+async def test_builder_does_not_import_isolated_plugin_as_host_target(
     deployment_database: tuple[Database, SystemPluginInventory],
     tmp_path: Path,
 ) -> None:
     database, inventory = deployment_database
-    installed_catalog = PluginCatalogManifest.from_plugin(TEXT)
+    installed_catalog = PluginCatalogManifest.from_plugin(LLM)
     mismatched_catalog = installed_catalog.model_copy(
         update={"title": "Tampered catalog title"}
     )
     release = _release(inventory, 1, catalog=mismatched_catalog)
     await _persist_release(database, release)
 
-    with pytest.raises(
-        SystemPluginDeploymentBuildError,
-        match="Failed to verify or write",
-    ):
-        await SystemPluginDeploymentManifestBuilder(database.sessions).build(
-            inventory,
-            repository_root=REPOSITORY_ROOT,
-            output=tmp_path / "mismatch.json",
-            slug=release.slug,
-            revision=release.revision,
-        )
+    manifest = await SystemPluginDeploymentManifestBuilder(database.sessions).build(
+        inventory,
+        repository_root=REPOSITORY_ROOT,
+        output=tmp_path / "mismatch.json",
+        slug=release.slug,
+        revision=release.revision,
+    )
+
+    assert manifest.plugins == ()
 
 
 @pytest.mark.asyncio
@@ -389,15 +372,15 @@ async def test_builder_rejects_same_catalog_with_different_project_implementatio
 ) -> None:
     database, inventory = deployment_database
     repository_root = tmp_path / "repository"
-    source_project = REPOSITORY_ROOT / "plugins" / "text"
-    copied_project = repository_root / "plugins" / "text"
+    source_project = REPOSITORY_ROOT / "plugins" / "llm"
+    copied_project = repository_root / "plugins" / "llm"
     for name, content in scan_source_tree(source_project):
         destination = copied_project / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(content)
     release = _release(inventory, 1, repository_root=repository_root)
     await _persist_release(database, release)
-    implementation = copied_project / "src" / "grafy_plugin_text" / "nodes.py"
+    implementation = copied_project / "src" / "grafy_plugin_llm" / "openai_compatible.py"
     implementation.write_bytes(
         implementation.read_bytes() + b"\n# different image implementation\n"
     )
@@ -426,8 +409,8 @@ async def test_builder_rejects_inventory_project_that_escapes_repository_root(
     repository_root = tmp_path / "repository"
     plugins = repository_root / "plugins"
     plugins.mkdir(parents=True)
-    (plugins / "text").symlink_to(
-        REPOSITORY_ROOT / "plugins" / "text",
+    (plugins / "llm").symlink_to(
+        REPOSITORY_ROOT / "plugins" / "llm",
         target_is_directory=True,
     )
 
@@ -466,7 +449,7 @@ async def test_builder_rejects_staged_lock_digest_mismatch(
 
 
 @pytest.mark.asyncio
-async def test_builder_rejects_installed_distribution_tamper(
+async def test_builder_ignores_host_distribution_digest_for_isolated_releases(
     deployment_database: tuple[Database, SystemPluginInventory],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -479,20 +462,16 @@ async def test_builder_rejects_installed_distribution_tamper(
         _mismatched_host_digest,
     )
 
-    with pytest.raises(
-        SystemPluginDeploymentBuildError,
-        match="installed distribution does not match the wheel rebuilt from "
-        "staged revision 1",
-    ):
-        await SystemPluginDeploymentManifestBuilder(database.sessions).build(
-            inventory,
-            repository_root=REPOSITORY_ROOT,
-            output=tmp_path / "tampered.json",
-            slug=release.slug,
-            revision=release.revision,
-        )
+    manifest = await SystemPluginDeploymentManifestBuilder(database.sessions).build(
+        inventory,
+        repository_root=REPOSITORY_ROOT,
+        output=tmp_path / "isolated-tamper.json",
+        slug=release.slug,
+        revision=release.revision,
+    )
 
-    assert not (tmp_path / "tampered.json").exists()
+    assert manifest.plugins == ()
+    assert (tmp_path / "isolated-tamper.json").is_file()
 
 
 @pytest.mark.asyncio
@@ -504,7 +483,7 @@ async def test_builder_rejects_inventory_policy_mismatch(
     release = _release(inventory, 1)
     await _persist_release(database, release)
     changed_entries = tuple(
-        entry.model_copy(update={"execution_policy": "isolated-only"})
+        entry.model_copy(update={"execution_policy": "host-eligible"})
         if entry.slug == release.slug
         else entry
         for entry in inventory.plugins
@@ -545,28 +524,15 @@ async def test_builder_never_host_binds_isolated_only_release(
 
 
 @pytest.mark.asyncio
-async def test_builder_all_mode_uses_latest_staged_revision_per_inventory_entry(
+async def test_builder_all_mode_does_not_host_bind_isolated_inventory(
     deployment_database: tuple[Database, SystemPluginInventory],
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database, inventory = deployment_database
     for entry in inventory.plugins:
         await _persist_release(database, _inventory_release(entry, 1))
-    text_entry = inventory.entry_for("builtin.text")
-    await _persist_release(database, _inventory_release(text_entry, 2))
-    monkeypatch.setattr(
-        "grafy_api.system_plugin_deployment.installed_distribution_build_digest",
-        _mismatched_host_digest,
-    )
-    monkeypatch.setattr(
-        "grafy_api.system_plugin_deployment.wheel_distribution_build_digest",
-        _constant_wheel_digest,
-    )
-    monkeypatch.setattr(
-        "grafy_api.system_plugin_deployment.load_system_plugin_deployment",
-        _skipped_deployment_load,
-    )
+    llm_entry = inventory.entry_for("external.llm")
+    await _persist_release(database, _inventory_release(llm_entry, 2))
 
     manifest = await SystemPluginDeploymentManifestBuilder(database.sessions).build(
         inventory,
@@ -574,15 +540,10 @@ async def test_builder_all_mode_uses_latest_staged_revision_per_inventory_entry(
         output=tmp_path / "all.json",
     )
 
-    expected_host_slugs = {
-        entry.slug
-        for entry in inventory.plugins
-        if entry.execution_policy.value == "host-eligible"
+    assert manifest.plugins == ()
+    assert {entry.slug for entry in inventory.plugins} == {
+        "external.gis",
+        "external.llm",
+        "external.ocr",
+        "external.sql",
     }
-    assert {entry.binding.slug for entry in manifest.plugins} == expected_host_slugs
-    text_binding = next(
-        entry.binding
-        for entry in manifest.plugins
-        if entry.binding.slug == "builtin.text"
-    )
-    assert text_binding.revision == 2

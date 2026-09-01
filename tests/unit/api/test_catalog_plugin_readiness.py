@@ -14,7 +14,6 @@ from grafy_core.domain.plugin_releases import (
     PluginPortContract,
     PluginPortDirection,
     PluginRelease,
-    PluginDistribution,
     PluginExecutionPolicy,
     PluginReleaseNamespace,
     PluginReleaseScope,
@@ -41,11 +40,10 @@ from grafy_core.artifacts import ArtifactRef, NodeConfig, NodeInput, NodeOutput
 from grafy_core.domain.modules import GraphModuleDefinition
 from grafy_core.nodes import NodeExecutionContext, PortShape
 from grafy_core.operators.modules import MODULE_BOUNDARY_REGISTRATIONS
-from grafy_plugin_arithmetic import ARITHMETIC
+from grafy_workbench.arithmetic import ARITHMETIC
 from grafy_core.artifact_contracts import INTEGER_VALUE, RASTER_IMAGE, TEXT_VALUE
 from grafy_core.table_contracts import TABLE_DATA
-from grafy_plugin_prompt import PROMPTS
-from grafy_plugin_text import TEXT
+from grafy_workbench.text import TEXT
 from grafy_core.plugins import Plugin, PluginRegistry
 from grafy_core.ports.modules import GraphModuleExecutionResult
 
@@ -243,7 +241,6 @@ def _release(
                 workspace_id=workspace_id,
             ),
             execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
-            distribution=None,
             installed_by_user_id=workspace_id,
             installed_by_platform_actor=None,
         ),
@@ -290,7 +287,6 @@ def _system_release(
                 workspace_id=None,
             ),
             execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
-            distribution=PluginDistribution.BUNDLED,
             installed_by_user_id=None,
             installed_by_platform_actor="test:system-catalog",
         ),
@@ -479,9 +475,8 @@ def test_exact_foreign_dependency_makes_cross_plugin_type_portable() -> None:
     assert readiness.detail is None
 
 
-def test_system_release_replaces_matching_host_plugin_and_node_presentation() -> None:
+def test_system_release_presents_published_plugin_nodes_with_an_exact_pin() -> None:
     registry = PluginRegistry()
-    registry.install(HOST_NOTES)
     release = _system_notes_release()
 
     response = NodeRegistryResponse.from_registry(
@@ -501,9 +496,10 @@ def test_system_release_replaces_matching_host_plugin_and_node_presentation() ->
     ]
     assert len(notes_plugins) == 1
     plugin = notes_plugins[0]
+    assert plugin.origin == "plugin"
     assert plugin.entry_kind == "plugin"
     assert plugin.scope is PluginReleaseScope.SYSTEM
-    assert plugin.distribution is PluginDistribution.BUNDLED
+    assert plugin.installation_scope is PluginReleaseScope.SYSTEM
     assert plugin.plugin_release is not None
     assert plugin.plugin_release.scope is PluginReleaseScope.SYSTEM
     assert plugin.plugin_release.slug == release.slug
@@ -527,7 +523,7 @@ def test_system_release_rejects_a_different_host_node_contract() -> None:
     changed_node = catalog.nodes[0].model_copy(update={"title": "Changed"})
     changed_catalog = catalog.model_copy(update={"nodes": (changed_node,)})
 
-    with pytest.raises(ValueError, match="conflicts with host Plugin 'notes'"):
+    with pytest.raises(ValueError, match="reserved builtin families"):
         NodeRegistryResponse.from_registry(
             registry,
             GraphModuleCatalogListing(entries=[], unavailable=[]),
@@ -537,7 +533,7 @@ def test_system_release_rejects_a_different_host_node_contract() -> None:
         )
 
 
-def test_host_runtime_registry_does_not_synthesize_plugin_catalog_entries() -> None:
+def test_builtin_registry_families_appear_in_catalog_without_releases() -> None:
     registry = PluginRegistry()
     registry.install(HOST_NOTES)
 
@@ -549,8 +545,11 @@ def test_host_runtime_registry_does_not_synthesize_plugin_catalog_entries() -> N
         workspace_id=WORKSPACE_ID,
     )
 
-    assert [entry.slug for entry in response.plugins] == ["graph.module"]
-    assert response.nodes == []
+    notes = next(entry for entry in response.plugins if entry.slug == "notes")
+    assert notes.origin == "builtin"
+    assert notes.plugin_release is None
+    assert {node.operator_id for node in response.nodes} == {"notes.transform"}
+    assert all(node.origin == "builtin" for node in response.nodes)
 
 
 def test_catalog_keeps_withdrawn_release_visible_disabled_and_exactly_pinned() -> None:
@@ -585,24 +584,18 @@ def test_catalog_keeps_withdrawn_release_visible_disabled_and_exactly_pinned() -
     assert node.plugin_release.revision == release.revision
 
 
-def test_system_release_collapses_exact_host_artifact_and_conversion_contracts() -> (
-    None
-):
+def test_builtin_catalog_exposes_host_artifact_and_conversion_contracts() -> None:
     registry = PluginRegistry()
     registry.install(ARITHMETIC)
     registry.install(TEXT)
-    release = _system_release(TEXT)
+    registry.freeze()
 
     response = NodeRegistryResponse.from_registry(
         registry,
         GraphModuleCatalogListing(entries=[], unavailable=[]),
         UnusedModuleExecutor(),
-        [_system_release(ARITHMETIC), release],
+        [],
         workspace_id=WORKSPACE_ID,
-        release_admission=ReleaseExecutionAdmission(
-            isolated_adapter_available=True,
-            runtime_profile="python-uv",
-        ),
     )
 
     artifact_keys = [
@@ -614,17 +607,9 @@ def test_system_release_collapses_exact_host_artifact_and_conversion_contracts()
         for conversion in response.artifact_conversions
     ]
     assert len(artifact_keys) == len(set(artifact_keys))
-    assert len(conversion_keys) == len(set(conversion_keys))
     assert conversion_keys == [("builtin.scalar.integer_to_text", 1)]
-    assert registry.artifact_conversions == ()
-    assert all(
-        artifact_keys.count((contract.key.id, contract.key.schema_version)) == 1
-        for contract in release.catalog.artifact_types
-    )
-    assert all(
-        conversion_keys.count((contract.key.id, contract.key.version)) == 1
-        for contract in release.catalog.artifact_conversions
-    )
+    assert ("scalar.integer", 1) in artifact_keys
+    assert ("scalar.text", 1) in artifact_keys
 
 
 def test_system_release_accepts_exact_installed_foreign_artifact_dependency() -> (
@@ -633,7 +618,8 @@ def test_system_release_accepts_exact_installed_foreign_artifact_dependency() ->
     registry = PluginRegistry()
     registry.install(ARITHMETIC)
     registry.install(TEXT)
-    release = _system_release(TEXT)
+    registry.freeze()
+    release = _system_release(HOST_NOTES)
 
     response = NodeRegistryResponse.from_registry(
         registry,
@@ -647,58 +633,26 @@ def test_system_release_accepts_exact_installed_foreign_artifact_dependency() ->
         ),
     )
 
-    dependency_keys = {
-        (dependency.key.id, dependency.key.schema_version)
-        for dependency in release.catalog.artifact_type_dependencies
-    }
     response_keys = {
         (artifact.key.id, artifact.key.schema_version)
         for artifact in response.artifact_types
     }
-    assert dependency_keys <= response_keys
-
-
-def test_system_releases_reject_different_exact_foreign_dependency_contract() -> (
-    None
-):
-    registry = PluginRegistry()
-    registry.install(ARITHMETIC)
-    registry.install(TEXT)
-    text_catalog = PluginCatalogManifest.from_plugin(TEXT)
-    changed_dependency = PluginArtifactTypeContract.from_spec(
-        INTEGER_VALUE
-    ).model_copy(update={"title": "Conflicting integer contract"})
-    changed_text_catalog = text_catalog.model_copy(
-        update={"artifact_type_dependencies": (changed_dependency,)}
-    )
-
-    with pytest.raises(ValueError, match="different exact contracts"):
-        NodeRegistryResponse.from_registry(
-            registry,
-            GraphModuleCatalogListing(entries=[], unavailable=[]),
-            UnusedModuleExecutor(),
-            [
-                _system_release(ARITHMETIC),
-                _system_release(TEXT, catalog=changed_text_catalog),
-            ],
-            workspace_id=WORKSPACE_ID,
-        )
+    assert ("scalar.integer", 1) in response_keys
+    assert ("scalar.text", 1) in response_keys
 
 
 def test_system_release_rejects_same_key_with_different_host_artifact_contract() -> (
     None
 ):
     registry = PluginRegistry()
-    registry.install(ARITHMETIC)
     registry.install(TEXT)
-    catalog = PluginCatalogManifest.from_plugin(TEXT)
-    changed_artifact = catalog.artifact_types[0].model_copy(
+    registry.freeze()
+    catalog = PluginCatalogManifest.from_plugin(HOST_NOTES)
+    changed_artifact = PluginArtifactTypeContract.from_spec(TEXT_VALUE).model_copy(
         update={"title": "Changed host contract"}
     )
     changed_catalog = catalog.model_copy(
-        update={
-            "artifact_types": (changed_artifact, *catalog.artifact_types[1:]),
-        }
+        update={"artifact_types": (changed_artifact,)},
     )
 
     with pytest.raises(ValueError, match="conflicts with the host catalog contract"):
@@ -706,17 +660,13 @@ def test_system_release_rejects_same_key_with_different_host_artifact_contract()
             registry,
             GraphModuleCatalogListing(entries=[], unavailable=[]),
             UnusedModuleExecutor(),
-            [
-                _system_release(ARITHMETIC),
-                _system_release(TEXT, catalog=changed_catalog),
-            ],
+            [_system_release(HOST_NOTES, catalog=changed_catalog)],
             workspace_id=WORKSPACE_ID,
         )
 
 
-def test_system_release_contract_matches_host_before_derived_projections() -> None:
+def test_builtin_catalog_entries_do_not_use_plugin_releases() -> None:
     registry = PluginRegistry()
-    registry.install(PROMPTS)
     registry.install(TEXT)
     registry.freeze()
 
@@ -724,17 +674,33 @@ def test_system_release_contract_matches_host_before_derived_projections() -> No
         registry,
         GraphModuleCatalogListing(entries=[], unavailable=[]),
         UnusedModuleExecutor(),
-        [
-            _system_release(PROMPTS),
-            _system_release(TEXT),
-        ],
+        [],
         workspace_id=WORKSPACE_ID,
     )
 
-    assert {plugin.slug for plugin in response.plugins} >= {
-        "builtin.prompt",
-        "builtin.text",
-    }
+    text = next(plugin for plugin in response.plugins if plugin.slug == "text")
+    assert text.origin == "builtin"
+    assert text.plugin_release is None
+    assert text.scope is None
+    nodes = [node for node in response.nodes if node.plugin_slug == "text"]
+    assert nodes
+    assert all(node.origin == "builtin" for node in nodes)
+    assert all(node.plugin_release is None for node in nodes)
+
+
+def test_published_plugin_cannot_override_a_reserved_builtin_operator() -> None:
+    registry = PluginRegistry()
+    registry.install(TEXT)
+    registry.freeze()
+
+    with pytest.raises(ValueError, match="reserved builtin families"):
+        NodeRegistryResponse.from_registry(
+            registry,
+            GraphModuleCatalogListing(entries=[], unavailable=[]),
+            UnusedModuleExecutor(),
+            [_system_release(TEXT)],
+            workspace_id=WORKSPACE_ID,
+        )
 
 
 def test_module_provider_is_a_separate_entry_kind_without_plugin_scope() -> None:
@@ -751,9 +717,9 @@ def test_module_provider_is_a_separate_entry_kind_without_plugin_scope() -> None
     module = next(
         plugin for plugin in response.plugins if plugin.slug == "graph.module"
     )
+    assert module.origin == "module"
     assert module.entry_kind == "module"
     assert module.scope is None
-    assert module.distribution is None
     assert module.plugin_release is None
     assert {node.operator_id for node in response.nodes} == {
         "module.input",

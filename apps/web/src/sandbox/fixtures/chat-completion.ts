@@ -61,6 +61,7 @@ export const CHAT_COMPLETION_SPEC: NodeSpec = {
   operator_id: "llm.openai_compatible.chat_completion",
   operator_version: 1,
   plugin_slug: "external.llm",
+  origin: "plugin",
   title: "OpenAI-compatible Chat Completion",
   description:
     "Calls a saved graph's OpenAI-compatible Chat Completions endpoint.",
@@ -109,9 +110,9 @@ export const CHAT_COMPLETION_REGISTRY: NodeRegistry = {
     {
       slug: "external.llm",
       title: "LLM",
+      origin: "plugin",
       entry_kind: "plugin",
       scope: "system",
-      distribution: "optional",
       revision: 1,
       plugin_release: { scope: "system", slug: "external.llm", revision: 1 },
       runnable: true,

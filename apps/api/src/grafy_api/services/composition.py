@@ -117,6 +117,7 @@ def build_workbench_components(
     canonical_artifact_conversions: CanonicalArtifactConversionMap = (
         CANONICAL_ARTIFACT_CONVERSIONS_BY_KEY
     ),
+    build_digest: str = "a" * 64,
 ) -> WorkbenchComponents:
     validate_system_host_bindings(
         system_host_bindings,
@@ -232,6 +233,7 @@ def build_workbench_components(
         plugin_release_lookup=plugin_releases,
         plugin_invoker=plugin_invoker,
         release_admission=release_admission,
+        build_digest=build_digest,
     )
     edge_values = EdgeValueResolver(
         resolvers=resolver_registry,

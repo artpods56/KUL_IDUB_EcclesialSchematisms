@@ -40,7 +40,6 @@ from grafy_core.domain.module_library import ModulePublicationState
 from grafy_core.domain.plugin_releases import (
     PluginCapabilityManifest,
     PluginCatalogManifest,
-    PluginDistribution,
     PluginExecutionPolicy,
     PluginReleaseScope,
     PluginRuntimeArtifact,
@@ -230,27 +229,6 @@ class PluginExecutionPolicyType(TypeDecorator[PluginExecutionPolicy]):
     ) -> PluginExecutionPolicy | None:
         del dialect
         return None if value is None else PluginExecutionPolicy(value)
-
-
-class PluginDistributionType(TypeDecorator[PluginDistribution]):
-    impl = String(16)
-    cache_ok = True
-
-    def process_bind_param(
-        self,
-        value: PluginDistribution | None,
-        dialect: Dialect,
-    ) -> str | None:
-        del dialect
-        return None if value is None else PluginDistribution(value).value
-
-    def process_result_value(
-        self,
-        value: str | None,
-        dialect: Dialect,
-    ) -> PluginDistribution | None:
-        del dialect
-        return None if value is None else PluginDistribution(value)
 
 
 class PluginFamilyLifecycleType(TypeDecorator[PluginFamilyLifecycle]):
@@ -1603,7 +1581,6 @@ plugin_installations = Table(
     Column("slug", String(100), nullable=False),
     Column("release_revision", Integer, nullable=False),
     Column("execution_policy", PluginExecutionPolicyType(), nullable=False),
-    Column("distribution", PluginDistributionType(), nullable=True),
     Column(
         "installed_by_user_id",
         SaUuid(as_uuid=True),
@@ -1630,10 +1607,8 @@ plugin_installations = Table(
         name="plugin_installation_execution_policy",
     ),
     CheckConstraint(
-        "(scope = 'system' AND distribution IN "
-        "('bundled', 'optional', 'published')) OR "
-        "(scope = 'workspace' AND distribution IS NULL "
-        "AND execution_policy = 'isolated-only')",
+        "(scope = 'workspace' AND execution_policy = 'isolated-only') OR "
+        "(scope = 'system')",
         name="plugin_installation_scope_policy",
     ),
     CheckConstraint(

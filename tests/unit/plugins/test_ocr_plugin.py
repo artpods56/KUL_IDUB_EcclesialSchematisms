@@ -5,7 +5,7 @@ from grafy_core.artifacts import InMemoryUnitOfWork
 from grafy_core.artifact_contracts import RASTER_IMAGE
 from grafy_core.plugins import PluginRegistry, PluginRuntimeContext
 from grafy_plugin_ocr import OCR
-from grafy_plugin_image import IMAGES
+from grafy_workbench.image import IMAGES
 from grafy_plugin_ocr.artifacts import OCR_PAGE_RESULT
 from grafy_plugin_ocr.resolvers import PilImageResolver
 from grafy_storage import LocalFileObjectStore

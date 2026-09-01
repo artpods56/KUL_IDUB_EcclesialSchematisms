@@ -14,6 +14,7 @@ const genericNodeSpec: NodeSpec = {
   operator_id: "sequence.collect",
   operator_version: 1,
   plugin_slug: "test",
+  origin: "builtin",
   title: "Collect",
   description: "Collect ordered artifacts.",
   catalog_visible: true,
@@ -57,6 +58,7 @@ const artifactQueryNodeSpec: NodeSpec = {
   operator_id: "sql.artifacts.query",
   operator_version: 1,
   plugin_slug: "external.sql",
+  origin: "builtin",
   title: "Query artifact tables",
   description: "Runs read-only queries over table artifacts.",
   catalog_visible: true,
@@ -135,6 +137,7 @@ describe("scoped Plugin release pins", () => {
     const data = createWorkflowNodeData({
       ...genericNodeSpec,
       plugin_slug: "notes",
+      origin: "plugin",
       plugin_revision: 4,
       plugin_release: { scope: "system", slug: "notes", revision: 4 },
     });

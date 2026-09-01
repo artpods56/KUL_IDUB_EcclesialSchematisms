@@ -56,7 +56,7 @@ class TextOutput(NodeOutput):
 class TextNode(Node[TextConfig, EmptyInput, TextOutput]):
     operator_id: ClassVar[str] = "text.input"
     operator_version: ClassVar[int] = 1
-    plugin_slug: ClassVar[str] = "builtin.text"
+    plugin_slug: ClassVar[str] = "text"
     title: ClassVar[str] = "Text"
     description: ClassVar[str] = "Produces text."
 
@@ -86,7 +86,7 @@ class CollectOutput(NodeOutput):
 class CollectNode(Node[NoConfig, CollectInput, CollectOutput]):
     operator_id: ClassVar[str] = "sequence.collect"
     operator_version: ClassVar[int] = 1
-    plugin_slug: ClassVar[str] = "builtin.sequence"
+    plugin_slug: ClassVar[str] = "sequence"
     title: ClassVar[str] = "Collect"
     description: ClassVar[str] = "Collects ordered artifacts."
 
@@ -140,7 +140,7 @@ class TransformOutput(NodeOutput):
 class TransformNode(Node[NoConfig, TransformInput, TransformOutput]):
     operator_id: ClassVar[str] = "text.transform"
     operator_version: ClassVar[int] = 1
-    plugin_slug: ClassVar[str] = "builtin.text"
+    plugin_slug: ClassVar[str] = "text"
     title: ClassVar[str] = "Transform"
     description: ClassVar[str] = "Transforms text."
 
@@ -162,9 +162,10 @@ def _catalog() -> NodeCatalog:
         artifact_types=(),
         nodes=(
             CatalogNode(
+                origin="builtin",
                 operator_id="text.input",
                 operator_version=1,
-                plugin_slug="builtin.text",
+                plugin_slug="text",
                 title="Text",
                 description="Produces text.",
                 config_schema=TextConfig.model_json_schema(),
@@ -180,17 +181,13 @@ def _catalog() -> NodeCatalog:
                         accepted_shapes=(PortShape.ONE,),
                     ),
                 ),
-                plugin_release=SavedGraphPluginReleasePin(
-                    scope=PluginReleaseScope.SYSTEM,
-                    slug="builtin.text",
-                    revision=2,
-                ),
                 runnable=True,
             ),
             CatalogNode(
+                origin="builtin",
                 operator_id="sequence.collect",
                 operator_version=1,
-                plugin_slug="builtin.sequence",
+                plugin_slug="sequence",
                 title="Collect",
                 description="Collects ordered artifacts.",
                 config_schema=NoConfig.model_json_schema(),
@@ -216,14 +213,10 @@ def _catalog() -> NodeCatalog:
                         accepted_shapes=(PortShape.MANY,),
                     ),
                 ),
-                plugin_release=SavedGraphPluginReleasePin(
-                    scope=PluginReleaseScope.SYSTEM,
-                    slug="builtin.sequence",
-                    revision=2,
-                ),
                 runnable=True,
             ),
             CatalogNode(
+                origin="plugin",
                 operator_id="markdown.consume",
                 operator_version=1,
                 plugin_slug="test.markdown",
@@ -250,9 +243,10 @@ def _catalog() -> NodeCatalog:
                 runnable=True,
             ),
             CatalogNode(
+                origin="builtin",
                 operator_id="text.transform",
                 operator_version=1,
-                plugin_slug="builtin.text",
+                plugin_slug="text",
                 title="Transform",
                 description="Transforms text.",
                 config_schema=NoConfig.model_json_schema(),
@@ -276,11 +270,6 @@ def _catalog() -> NodeCatalog:
                         accepted_shapes=(PortShape.ONE,),
                     ),
                 ),
-                plugin_release=SavedGraphPluginReleasePin(
-                    scope=PluginReleaseScope.SYSTEM,
-                    slug="builtin.text",
-                    revision=2,
-                ),
                 runnable=True,
             ),
         ),
@@ -295,7 +284,7 @@ def _catalog() -> NodeCatalog:
     )
 
 
-def test_builder_adds_typed_node_with_exact_catalog_release() -> None:
+def test_builder_adds_typed_builtin_node_without_a_plugin_pin() -> None:
     graph = GraphBuilder(_catalog())
 
     text = graph.add(TextNode, TextConfig(text="hello"))
@@ -304,9 +293,10 @@ def test_builder_adds_typed_node_with_exact_catalog_release() -> None:
 
     assert text.node_id == "node-0001-text-input"
     assert document.model_dump(mode="json") == {
-        "schema_version": 5,
+        "schema_version": 6,
         "nodes": [
             {
+                "kind": "builtin",
                 "id": "node-0001-text-input",
                 "operator_id": "text.input",
                 "operator_version": 1,
@@ -315,11 +305,7 @@ def test_builder_adds_typed_node_with_exact_catalog_release() -> None:
                 "layout": None,
                 "input_plugs": [],
                 "artifact_type_bindings": [],
-                "plugin_release_pin": {
-                    "scope": "system",
-                    "slug": "builtin.text",
-                    "revision": 2,
-                },
+                "plugin_release_pin": None,
             }
         ],
         "edges": [],

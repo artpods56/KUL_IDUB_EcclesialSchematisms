@@ -207,6 +207,7 @@ def _document(node_id: str = "draft-node") -> SavedGraphDocument:
     return SavedGraphDocument(
         nodes=(
             SavedGraphNode(
+                kind="builtin",
                 id=node_id,
                 operator_id="example.operator",
                 operator_version=1,
@@ -405,6 +406,7 @@ async def test_replace_preserves_secret_for_unchanged_unavailable_operator() -> 
         SavedGraphDocument(
             nodes=(
                 SavedGraphNode(
+                    kind="builtin",
                     id="draft-node",
                     operator_id="different.operator",
                     operator_version=1,
@@ -416,6 +418,7 @@ async def test_replace_preserves_secret_for_unchanged_unavailable_operator() -> 
         SavedGraphDocument(
             nodes=(
                 SavedGraphNode(
+                    kind="builtin",
                     id="draft-node",
                     operator_id="example.operator",
                     operator_version=2,

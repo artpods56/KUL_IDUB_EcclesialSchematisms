@@ -161,7 +161,7 @@ export function createSavedGraphRequest(
   return {
     name: document.name.trim(),
     document: {
-      schema_version: 5,
+      schema_version: 6,
       nodes: document.nodes.map(projectSavedGraphNode),
       edges: document.edges.map(projectSavedGraphEdge),
       presentation: presentation ?? {
@@ -189,6 +189,7 @@ function projectSavedGraphNode(
     ),
     config: structuredClone(node.config ?? {}),
     id: node.id,
+    kind: node.kind,
     input_plugs: (node.input_plugs ?? []).map(projectSavedGraphInputPlug),
     layout: projectSavedGraphLayout(node.layout),
     operator_id: node.operator_id,

@@ -71,7 +71,7 @@ function savedGraph(
     created_at: "2026-07-17T12:00:00Z",
     updated_at: "2026-07-17T12:00:00Z",
     document: {
-      schema_version: 5,
+      schema_version: 6,
       nodes: [],
       edges: [],
       presentation: {
@@ -205,6 +205,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
     const finalPosition = { x: 240, y: 180 };
     const node = {
       id: "source",
+      kind: "builtin" as const,
       operator_id: "test.source",
       operator_version: 1,
       config: { label: "source" },
@@ -280,6 +281,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
   it("keeps an uncheckpointed collaborative head dirty and non-materializable", async () => {
     const checkpointNode = {
       id: "llm",
+      kind: "builtin" as const,
       operator_id: "llm.openai.completion",
       operator_version: 1,
       position: { x: 0, y: 0 },
@@ -382,6 +384,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
   it("refreshes the secret binding snapshot from a checkpointed room head", async () => {
     const checkpointNode = {
       id: "llm",
+      kind: "builtin" as const,
       operator_id: "llm.openai.completion",
       operator_version: 1,
       position: { x: 0, y: 0 },
@@ -535,6 +538,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
         ...savedGraph(GRAPH_A_ID, "Dragged graph", 3).document,
         nodes: [{
           id: "source",
+          kind: "builtin" as const,
           operator_id: "test.source",
           operator_version: 1,
           config: { label: "source" },
@@ -563,6 +567,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
         nodes: [
           {
             id: "legacy-node",
+            kind: "builtin" as const,
             operator_id: "legacy.operator",
             operator_version: 7,
             config: { preserved: true },

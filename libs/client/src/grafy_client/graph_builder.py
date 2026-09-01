@@ -69,6 +69,19 @@ class _AuthoredNode:
     input_plugs: list[SavedGraphInputPlug]
 
 
+def _node_kind(catalog_node: CatalogNode) -> Literal["builtin", "plugin", "module"]:
+    if catalog_node.origin in {"builtin", "plugin", "module"}:
+        return catalog_node.origin
+    if catalog_node.plugin_release is not None:
+        return "plugin"
+    if (
+        catalog_node.module_graph_id is not None
+        or catalog_node.plugin_slug == "graph.module"
+    ):
+        return "module"
+    return "builtin"
+
+
 def _artifact_type_variables(
     node_class: type[Node[Any, Any, Any]],
 ) -> set[str]:
@@ -127,7 +140,8 @@ class GraphBuilder:
                 f"Plugin node {node_class.operator_id}@"
                 f"{node_class.operator_version} is not runnable ({reason}){detail}"
             )
-        if catalog_node.plugin_release is None:
+        origin = catalog_node.origin
+        if origin == "plugin" and catalog_node.plugin_release is None:
             raise GraphBuilderError(
                 f"Catalog node {node_class.operator_id}@"
                 f"{node_class.operator_version} has no exact Plugin release pin"
@@ -458,6 +472,7 @@ class GraphBuilder:
 
         nodes = tuple(
             SavedGraphNode(
+                kind=_node_kind(authored.catalog_node),
                 id=authored.handle.node_id,
                 operator_id=authored.node_class.operator_id,
                 operator_version=authored.node_class.operator_version,
@@ -474,7 +489,11 @@ class GraphBuilder:
                     )
                     for variable, artifact_type in sorted(authored.bindings.items())
                 ),
-                plugin_release_pin=authored.catalog_node.plugin_release,
+                plugin_release_pin=(
+                    authored.catalog_node.plugin_release
+                    if authored.catalog_node.origin == "plugin"
+                    else None
+                ),
             )
             for index, authored in enumerate(self._nodes)
         )

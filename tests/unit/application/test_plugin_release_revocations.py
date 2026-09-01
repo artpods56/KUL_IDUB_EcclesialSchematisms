@@ -12,7 +12,6 @@ from grafy_core.domain.plugin_releases import (
     PlatformPluginActor,
     PluginCapabilityManifest,
     PluginCatalogManifest,
-    PluginDistribution,
     PluginExecutionPolicy,
     PluginNodeContract,
     PluginRelease,
@@ -101,7 +100,6 @@ def _release(
             if is_system
             else PluginExecutionPolicy.ISOLATED_ONLY
         ),
-        distribution=PluginDistribution.BUNDLED if is_system else None,
         installed_by_user_id=None if is_system else TEST_USER_ID,
         installed_by_platform_actor="ci:publisher" if is_system else None,
     )

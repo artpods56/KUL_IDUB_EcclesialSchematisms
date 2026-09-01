@@ -22,7 +22,6 @@ from grafy_core.artifacts import (
 )
 from grafy_core.conversions import ArtifactConversion, ArtifactConversionKey
 from grafy_core.domain.plugin_identity import (
-    PluginDistribution,
     PluginExecutionPolicy,
     PlatformPluginActor,
     PluginReleaseNamespace,
@@ -895,7 +894,6 @@ __all__ = [
     "PluginArtifactTypeKey",
     "PluginCapabilityManifest",
     "PluginCatalogManifest",
-    "PluginDistribution",
     "PluginExecutionPolicy",
     "PluginExportFormat",
     "PluginFieldProjection",
