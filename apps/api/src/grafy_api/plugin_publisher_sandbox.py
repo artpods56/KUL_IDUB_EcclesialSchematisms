@@ -142,6 +142,8 @@ class DockerPublisherSandbox:
             "128",
             "--memory",
             "1g",
+            "--memory-swap",
+            "1g",
             "--cpus",
             "1.0",
             "--log-driver",

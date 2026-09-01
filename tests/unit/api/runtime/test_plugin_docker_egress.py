@@ -178,6 +178,10 @@ async def test_egress_sandbox_uses_two_dedicated_networks_and_broker_only_outbou
         sandbox.guest_network
     )
     assert sandbox.egress_network not in sandbox_create
+    assert broker_create[broker_create.index("--memory-swap") + 1] == "134217728"
+    assert sandbox_create[sandbox_create.index("--memory-swap") + 1] == str(
+        runtime_profile("python-uv").memory_bytes
+    )
     assert network_connect[-2:] == (sandbox.guest_network, "broker-id")
     assert ("--alias", "database.example.com") == (
         network_connect[network_connect.index("database.example.com") - 1],

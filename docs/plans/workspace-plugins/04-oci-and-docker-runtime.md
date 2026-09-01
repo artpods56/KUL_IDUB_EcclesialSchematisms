@@ -165,7 +165,9 @@ operations required by image publication and Plugin invocation.
 - [x] Drop all Linux capabilities and enable `no-new-privileges`.
 - [x] Apply an approved seccomp policy and expose no devices or privileged mode.
 - [x] Enforce CPU, memory, PID, wall-time, open-file, log, input, output, and
-      scratch limits.
+      scratch limits. Set `--memory-swap` equal to `--memory` for publisher,
+      guest, and egress-broker containers so the configured memory ceiling is
+      also the total physical-memory-plus-swap ceiling on Linux hosts.
 - [x] Keep the Docker socket, API filesystem, database, object-store
       credentials, and working copy out of the Plugin container.
 - [x] Put writable temporary data only in bounded scope/release tmpfs with
@@ -212,8 +214,9 @@ operations required by image publication and Plugin invocation.
 - [x] Nested Modules reuse the top-level sandbox scope.
 - [x] Cancellation and timeout leave no running child or orphaned container.
 - [x] Missing Docker cache is restored from the frozen local OCI artifact.
-- [x] The CPU ceiling is present on the live container, and memory, PID, output,
-      and log limit outcomes are deterministic.
+- [x] The CPU ceiling is present on the live container; its memory and total
+      memory-plus-swap ceilings are equal; and memory, PID, output, and log
+      limit outcomes are deterministic.
 - [x] Cold container and child-process invocation latency are measured on a
       representative deployment-sized Linux VM and recorded under Agent
       handoff. The production VPS should rerun the same test before rollout.

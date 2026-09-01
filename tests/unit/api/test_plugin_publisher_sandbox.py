@@ -37,6 +37,7 @@ def test_candidate_command_is_networkless_read_only_and_resource_bounded(
     assert "--read-only" in command
     assert command[command.index("--pids-limit") + 1] == "128"
     assert command[command.index("--memory") + 1] == "1g"
+    assert command[command.index("--memory-swap") + 1] == "1g"
     assert command[command.index("--cpus") + 1] == "1.0"
     mounts = [
         command[index + 1]

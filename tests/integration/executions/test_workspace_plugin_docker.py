@@ -468,6 +468,7 @@ async def test_docker_runtime_restores_reuses_hardens_and_cleans_sandbox(
         assert host_config["NanoCpus"] == int(profile.cpu_count * 1_000_000_000)
         assert host_config["PidsLimit"] == profile.pid_limit
         assert host_config["Memory"] == profile.memory_bytes
+        assert host_config["MemorySwap"] == profile.memory_bytes
         assert "no-new-privileges=true" in host_config["SecurityOpt"]
         assert any(
             option.startswith("seccomp=") for option in host_config["SecurityOpt"]
