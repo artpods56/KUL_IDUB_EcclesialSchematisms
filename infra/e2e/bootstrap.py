@@ -6,7 +6,9 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 import os
 from pathlib import Path
-from secrets import token_urlsafe
+from secrets import token_hex, token_urlsafe
+import subprocess
+import sys
 from uuid import UUID
 
 from grafy_core.application.identity import IdentityService
@@ -246,12 +248,77 @@ async def run() -> None:
             "/data/e2e/system-plugin-deployment.json",
         )
     )
-    await seed_workspace(token_path)
-    await publish_plugins(deployment_manifest_path)
-    print(
-        f"Prepared Grafy live E2E Workspace {E2E_WORKSPACE_ID}; "
-        f"PAT written to {token_path}"
-    )
+    builder_name = f"grafy-e2e-bootstrap-{os.getpid()}-{token_hex(4)}"
+    builder_attempted = False
+    try:
+        try:
+            builder_attempted = True
+            created = subprocess.run(
+                (
+                    "docker",
+                    "buildx",
+                    "create",
+                    "--name",
+                    builder_name,
+                    "--driver",
+                    "docker-container",
+                    "--use",
+                    "--bootstrap",
+                ),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(
+                "Could not provision the live E2E OCI image builder"
+            ) from exc
+        if created.returncode != 0:
+            detail = (created.stderr or created.stdout).strip()[-4_000:]
+            raise RuntimeError(
+                "Live E2E OCI image builder provisioning failed with exit code "
+                f"{created.returncode}: {detail}"
+            )
+
+        await seed_workspace(token_path)
+        await publish_plugins(deployment_manifest_path)
+        print(
+            f"Prepared Grafy live E2E Workspace {E2E_WORKSPACE_ID}; "
+            f"PAT written to {token_path}"
+        )
+    finally:
+        active_error = sys.exception()
+        if builder_attempted:
+            try:
+                removed = subprocess.run(
+                    ("docker", "buildx", "rm", "--force", builder_name),
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                if active_error is None:
+                    raise RuntimeError(
+                        "Could not remove the live E2E OCI image builder"
+                    ) from exc
+                detail = str(exc).strip()[-4_000:]
+                print(
+                    "Live E2E cleanup warning: could not remove OCI image "
+                    f"builder {builder_name}: {detail}",
+                    file=sys.stderr,
+                )
+            else:
+                if removed.returncode != 0:
+                    detail = (removed.stderr or removed.stdout).strip()[-4_000:]
+                    message = (
+                        "Live E2E OCI image builder cleanup failed with exit code "
+                        f"{removed.returncode} for {builder_name}: {detail}"
+                    )
+                    if active_error is None:
+                        raise RuntimeError(message)
+                    print(f"Live E2E cleanup warning: {message}", file=sys.stderr)
 
 
 if __name__ == "__main__":

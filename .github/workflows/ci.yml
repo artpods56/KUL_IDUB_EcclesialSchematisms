@@ -13,10 +13,64 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: Retained contract
-    runs-on: ubuntu-latest
+  backend-tests:
+    name: Backend tests
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: docker/setup-docker-action@v5
+        with:
+          version: v28.4.0
+          set-host: true
+          daemon-config: |
+            {
+              "features": {
+                "containerd-snapshotter": true
+              }
+            }
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker-container
+      - name: Install native GIS contract tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends gdal-bin
+      - name: Install locked Python workspace
+        run: uv sync --locked --all-extras
+      - name: Verify OCI and GIS capabilities
+        run: |
+          docker version
+          docker buildx version
+          docker buildx inspect --bootstrap
+          command -v gdal_create
+          uv run python - <<'PY'
+          from grafy_plugin_gis.gdal import GdalCli
+
+          capabilities = GdalCli().capabilities()
+          required = {
+              "pmtiles_write": capabilities.pmtiles_write,
+              "cog_write": capabilities.cog_write,
+              "png_write": capabilities.png_write,
+          }
+          missing = [name for name, available in required.items() if not available]
+          if missing:
+              raise SystemExit(f"Missing writable GDAL capabilities: {', '.join(missing)}")
+          print(capabilities.model_dump_json())
+          PY
+      - name: Run backend tests
+        run: uv run --all-extras pytest
+
+  quality-contracts:
+    name: Lint, type and API contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,31 +84,53 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
-      - name: Install locked workspaces
-        run: |
-          uv sync --locked --all-extras
-          npm --prefix apps/web ci
-      - name: Test
-        run: |
-          uv run --all-extras pytest
-          npm --prefix apps/web test
-      - name: Lint
-        run: |
-          uv run ruff check apps/api/src libs/client/src libs/core/src libs/persistence/src libs/storage/src plugins/*/src infra/db/migrations scripts tests
-          npm --prefix apps/web run lint
-      - name: Typecheck
-        run: |
-          uv run pyright libs/client
-          npm --prefix apps/web run typecheck
-      - name: Verify generated API and production build
-        run: |
-          npm --prefix apps/web run check:api
-          npm --prefix apps/web run build
+      - name: Install locked Python workspace
+        id: python_install
+        run: uv sync --locked --all-extras
+      - name: Install locked web workspace
+        id: web_install
+        if: ${{ !cancelled() }}
+        run: npm --prefix apps/web ci
+      - name: Python lint
+        if: ${{ !cancelled() && steps.python_install.outcome == 'success' }}
+        run: uv run ruff check apps/api/src libs/client/src libs/core/src libs/persistence/src libs/storage/src plugins/*/src infra/db/migrations scripts tests
+      - name: Client typecheck
+        if: ${{ !cancelled() && steps.python_install.outcome == 'success' }}
+        run: uv run pyright libs/client
+      - name: Web lint
+        if: ${{ !cancelled() && steps.web_install.outcome == 'success' }}
+        run: npm --prefix apps/web run lint
+      - name: Web typecheck
+        if: ${{ !cancelled() && steps.web_install.outcome == 'success' }}
+        run: npm --prefix apps/web run typecheck
+      - name: Generated API contract
+        if: ${{ !cancelled() && steps.python_install.outcome == 'success' && steps.web_install.outcome == 'success' }}
+        run: npm --prefix apps/web run check:api
+
+  web:
+    name: Web tests and production build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install locked web workspace
+        id: web_install
+        run: npm --prefix apps/web ci
+      - name: Run web tests
+        if: ${{ !cancelled() && steps.web_install.outcome == 'success' }}
+        run: npm --prefix apps/web test
+      - name: Build production web application
+        if: ${{ !cancelled() && steps.web_install.outcome == 'success' }}
+        run: npm --prefix apps/web run build
 
   live-e2e:
     name: Live HTTP/PAT multimodal graph
-    needs: check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -64,6 +140,20 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - uses: docker/setup-docker-action@v5
+        with:
+          version: v28.4.0
+          set-host: true
+          daemon-config: |
+            {
+              "features": {
+                "containerd-snapshotter": true
+              }
+            }
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker-container
+      - uses: docker/setup-compose-action@v2
       - name: Install locked Python workspace
         run: uv sync --locked --all-extras
       - name: Run disposable live deployment

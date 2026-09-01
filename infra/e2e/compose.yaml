@@ -39,7 +39,7 @@ services:
     security_opt:
       - no-new-privileges:true
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - "${GRAFY_E2E_DOCKER_SOCKET:?GRAFY_E2E_DOCKER_SOCKET must be set}:/var/run/docker.sock"
       - "${GRAFY_E2E_WORKSPACE_ROOT:?GRAFY_E2E_WORKSPACE_ROOT must be set}:${GRAFY_E2E_WORKSPACE_ROOT:?GRAFY_E2E_WORKSPACE_ROOT must be set}"
       - "${GRAFY_E2E_CONTROL_ROOT:?GRAFY_E2E_CONTROL_ROOT must be set}:/run/grafy-e2e"
       - ../e2e/bootstrap-entrypoint.sh:/opt/grafy-e2e/bootstrap-entrypoint.sh:ro
@@ -104,6 +104,7 @@ services:
       - "${GRAFY_E2E_WORKSPACE_ROOT:?GRAFY_E2E_WORKSPACE_ROOT must be set}:${GRAFY_E2E_WORKSPACE_ROOT:?GRAFY_E2E_WORKSPACE_ROOT must be set}"
       - ../e2e/network-policy.toml:/etc/grafy/e2e-network-policy.toml:ro
       - ../e2e/tls/ca.crt:/etc/grafy/e2e-ca.crt:ro
+      - "${GRAFY_E2E_DOCKER_SOCKET:?GRAFY_E2E_DOCKER_SOCKET must be set}:/var/run/docker.sock"
     depends_on:
       bootstrap:
         condition: service_completed_successfully

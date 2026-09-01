@@ -70,12 +70,27 @@ def run_checked(
 
 def main() -> int:
     repository = Path(__file__).resolve().parents[2]
-    docker_socket = Path("/var/run/docker.sock")
-    if not docker_socket.exists():
+    docker_host = os.environ.get("DOCKER_HOST")
+    if sys.platform == "darwin":
+        docker_socket = Path("/var/run/docker.sock")
+    elif docker_host is None:
+        docker_socket = Path("/var/run/docker.sock")
+    elif docker_host.startswith("unix://"):
+        docker_socket = Path(docker_host.removeprefix("unix://"))
+    else:
         raise LiveE2EError(
-            "The live E2E test requires a running Docker daemon at "
-            "/var/run/docker.sock"
+            "The live E2E test requires a local Unix Docker daemon socket"
         )
+    if not docker_socket.is_absolute():
+        raise LiveE2EError("The Docker daemon socket path must be absolute")
+    try:
+        docker_socket_metadata = docker_socket.stat()
+    except OSError as exc:
+        raise LiveE2EError(
+            f"The live E2E test cannot access Docker socket {docker_socket}"
+        ) from exc
+    if not stat.S_ISSOCK(docker_socket_metadata.st_mode):
+        raise LiveE2EError(f"Docker endpoint {docker_socket} is not a Unix socket")
 
     for address, port in (("127.0.0.1", 18080), ("0.0.0.0", 18443)):
         try:
@@ -140,7 +155,7 @@ def main() -> int:
             "run",
             "--rm",
             "--volume",
-            "/var/run/docker.sock:/var/run/docker.sock:ro",
+            f"{docker_socket}:/var/run/docker.sock:ro",
             broker_image,
             "python",
             "-c",
@@ -241,6 +256,7 @@ def main() -> int:
                 "GRAFY_E2E_HOST_UID": str(os.getuid()),
                 "GRAFY_E2E_HOST_GID": str(os.getgid()),
                 "GRAFY_E2E_DOCKER_GID": str(docker_socket_gid),
+                "GRAFY_E2E_DOCKER_SOCKET": str(docker_socket),
                 "GRAFY_DATA_VOLUME": f"{project}-data",
                 "GRAFY_DOCKER_NETWORK": f"{project}-internal",
                 "GRAFY_DOCKER_SUBNET": str(docker_subnet),
@@ -322,13 +338,45 @@ def main() -> int:
             )
             raise
         finally:
-            subprocess.run(
-                [*compose, "down", "--volumes", "--remove-orphans"],
-                cwd=repository,
-                env=stack_environment,
-                check=False,
-                text=True,
-            )
+            active_error = sys.exception()
+            try:
+                cleanup = subprocess.run(
+                    [
+                        *compose,
+                        "down",
+                        "--volumes",
+                        "--remove-orphans",
+                        "--rmi",
+                        "local",
+                    ],
+                    cwd=repository,
+                    env=stack_environment,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                if active_error is None:
+                    raise LiveE2EError(
+                        f"Could not clean up disposable Compose project {project}"
+                    ) from exc
+                detail = str(exc).strip()[-4_000:]
+                print(
+                    "Live E2E cleanup warning: could not clean up disposable "
+                    f"Compose project {project}: {detail}",
+                    file=sys.stderr,
+                )
+            else:
+                if cleanup.returncode != 0:
+                    detail = (cleanup.stderr or cleanup.stdout).strip()[-4_000:]
+                    message = (
+                        "Disposable Compose project cleanup failed for "
+                        f"{project} with exit code {cleanup.returncode}: {detail}"
+                    )
+                    if active_error is None:
+                        raise LiveE2EError(message)
+                    print(f"Live E2E cleanup warning: {message}", file=sys.stderr)
     return 0
 
 
