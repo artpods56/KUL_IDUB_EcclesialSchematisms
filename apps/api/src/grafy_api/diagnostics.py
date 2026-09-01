@@ -280,6 +280,17 @@ def _sanitize_event(
     return event_dict
 
 
+def _prepare_console_event(
+    _logger: WrappedLogger,
+    _method_name: str,
+    event_dict: EventDict,
+) -> EventDict:
+    exception = event_dict.get("exception")
+    if isinstance(exception, Mapping):
+        event_dict["exception_diagnostic"] = event_dict.pop("exception")
+    return event_dict
+
+
 def _shared_processors() -> list[Processor]:
     return [
         structlog.contextvars.merge_contextvars,
@@ -299,10 +310,14 @@ def configure_diagnostics(*, level: LogLevel, renderer: LogRenderer) -> None:
         if renderer == "json"
         else structlog.dev.ConsoleRenderer(colors=False)
     )
+    renderer_processors: list[Processor] = []
+    if renderer == "console":
+        renderer_processors.append(_prepare_console_event)
     formatter = structlog.stdlib.ProcessorFormatter(
         foreign_pre_chain=_shared_processors(),
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            *renderer_processors,
             final_renderer,
         ],
     )

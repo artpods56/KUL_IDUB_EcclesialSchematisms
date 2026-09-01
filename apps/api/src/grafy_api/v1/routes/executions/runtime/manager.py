@@ -788,6 +788,25 @@ class RunExecutionManager:
             if record.control.cancel_requested or _contains_cancellation(exc):
                 await self._complete(record, status="cancelled")
             else:
+                logger.error(
+                    "graph_execution_failed",
+                    extra={
+                        "workspace_id": str(record.workspace_id),
+                        "execution_id": str(record.execution_id),
+                        "graph_id": (
+                            None
+                            if record.request.graph_id is None
+                            else str(record.request.graph_id)
+                        ),
+                        "graph_revision": record.request.graph_revision,
+                        "actor_id": (
+                            None
+                            if record.starter is None
+                            else str(record.starter.actor_id)
+                        ),
+                    },
+                    exc_info=(type(exc), exc, exc.__traceback__),
+                )
                 await self._complete(
                     record,
                     status="failed",

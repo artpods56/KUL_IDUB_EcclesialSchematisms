@@ -1,5 +1,6 @@
 """Framework-neutral coordination of one prepared graph execution."""
 
+import logging
 from uuid import uuid4
 
 from grafy_core.domain.artifact_outputs import ArtifactOutputValue
@@ -15,6 +16,9 @@ from .models import (
     PreparedGraphExecution,
 )
 from .node_execution import NodeExecutionService
+
+
+logger = logging.getLogger(__name__)
 
 
 class GraphExecutionCoordinator:
@@ -106,6 +110,32 @@ class GraphExecutionCoordinator:
                     exc.failure_code
                     if isinstance(exc, NodeRunError)
                     else PluginFailureCode.INTERNAL_ADAPTER_FAILURE
+                )
+                plugin_release = compiled_node.plugin_release
+                logger.error(
+                    "node_execution_failed",
+                    extra={
+                        "workspace_id": str(execution.workspace_id),
+                        "graph_id": (
+                            None
+                            if execution.graph_id is None
+                            else str(execution.graph_id)
+                        ),
+                        "graph_revision": execution.graph_revision,
+                        "workflow_run_id": str(workflow_run_id),
+                        "node_id": node_request.id,
+                        "node_run_id": str(node_run_id),
+                        "operator_id": node_request.operator_id,
+                        "operator_version": node_request.operator_version,
+                        "plugin_slug": (
+                            None if plugin_release is None else plugin_release.slug
+                        ),
+                        "plugin_revision": (
+                            None if plugin_release is None else plugin_release.revision
+                        ),
+                        "failure_code": failure_code.value,
+                    },
+                    exc_info=(type(exc), exc, exc.__traceback__),
                 )
                 if control is not None:
                     control.publish_node_status(
