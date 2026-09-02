@@ -259,7 +259,7 @@ afterEach(async () => {
 });
 
 describe("NodeSelector", () => {
-  it("uses the mockup artifact-family rail", async () => {
+  it("scopes the rail by source with artifact and input-node refinements", async () => {
     await renderSelector();
 
     expect(
@@ -268,22 +268,54 @@ describe("NodeSelector", () => {
         ?.getAttribute("aria-orientation"),
     ).toBe("vertical");
     const filters = [
-      ...dialog().querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'),
+      ...dialog().querySelectorAll<HTMLButtonElement>(
+        '[role="toolbar"] button',
+      ),
     ];
     expect(filters.map((filter) => filter.textContent)).toEqual([
       "All",
-      "Text",
-      "Images",
-      "Tables",
-      "Spatial",
-      "Prompts",
-      "Sequences",
+      "Built-in",
+      "OCR",
       "Workspace library",
     ]);
 
-    await React.act(async () => buttonNamed("Text, 4 nodes").click());
-    expect(dialog().textContent).toContain("Text nodes");
-    expect(options()).toHaveLength(4);
+    // Source category scopes the list to one provider plugin.
+    await React.act(async () => buttonNamed("Built-in, 4 nodes").click());
+    expect(dialog().textContent).toContain("Built-in nodes");
+    expect(options().map((option) => option.textContent)).toEqual([
+      expect.stringContaining("Compose map"),
+      expect.stringContaining("Enter text"),
+      expect.stringContaining("Fuzzy match tables"),
+      expect.stringContaining("Replace text"),
+    ]);
+
+    // The artifact type refines within the active source.
+    const artifactSelect = dialog().querySelector<HTMLSelectElement>(
+      '[aria-label="Artifact type"]',
+    );
+    expect(artifactSelect).not.toBeNull();
+    await React.act(async () => {
+      if (!artifactSelect) return;
+      artifactSelect.value = "artifact:scalar.text@1";
+      artifactSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(options().map((option) => option.textContent)).toEqual([
+      expect.stringContaining("Enter text"),
+      expect.stringContaining("Replace text"),
+    ]);
+
+    // Input nodes only: nodes that take no inputs because they are inputs themselves.
+    const inputToggle = dialog().querySelector<HTMLInputElement>(
+      'input[type="checkbox"]',
+    );
+    expect(inputToggle).not.toBeNull();
+    await React.act(async () => {
+      inputToggle?.click();
+    });
+    expect(inputToggle?.checked).toBe(true);
+    expect(options().map((option) => option.textContent)).toEqual([
+      expect.stringContaining("Enter text"),
+    ]);
   });
 
   it("searches the full registry and inspects a result without inserting it", async () => {
@@ -473,8 +505,8 @@ describe("NodeSelector", () => {
     });
 
     expect(options().map((option) => option.textContent)).toEqual([
-      expect.stringContaining("Replace text"),
       expect.stringContaining("Normalize invoices"),
+      expect.stringContaining("Replace text"),
     ]);
     expect(dialog().textContent).toContain(
       "Showing nodes that can connect from Source text.",

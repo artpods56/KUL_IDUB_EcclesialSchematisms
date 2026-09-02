@@ -147,8 +147,8 @@ export default function WorkspacesPage() {
       <main className="grafy-workspace-directory__main">
         <header className="grafy-workspace-directory__header">
           <div>
-            <p className="grafy-workspace-overview__eyebrow">Settings</p>
-            <h1>Teams &amp; access</h1>
+            <p className="grafy-workspace-overview__eyebrow">Administration</p>
+            <h1>Workspace directory</h1>
             <p>
               Manage the locations that own your graphs and control who can work
               with them.

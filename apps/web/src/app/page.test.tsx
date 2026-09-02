@@ -1,20 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/features/graphs/GraphBrowser", () => {
-  const GraphBrowser = () => null;
-  return { GraphBrowser, default: GraphBrowser };
+vi.mock("@/features/graphs/WorkspaceGraphRedirect", () => {
+  const WorkspaceGraphRedirect = () => null;
+  return { WorkspaceGraphRedirect, default: WorkspaceGraphRedirect };
 });
 
-import { GraphBrowser } from "@/features/graphs/GraphBrowser";
+import { WorkspaceGraphRedirect } from "@/features/graphs/WorkspaceGraphRedirect";
 import HomePage from "./page";
 
 describe("post-login routing", () => {
-  it("uses the graph browser as the authenticated root experience", () => {
-    expect(HomePage).toBe(GraphBrowser);
+  it("resolves the authenticated root to a workspace graph route", () => {
+    expect(HomePage).toBe(WorkspaceGraphRedirect);
   });
 
-  it("uses the same canonical browser at /graphs", async () => {
+  it("keeps /graphs as a compatible redirect", async () => {
     const graphsRoute = await import("./graphs/page");
-    expect(graphsRoute.default).toBe(GraphBrowser);
+    expect(graphsRoute.default).toBe(WorkspaceGraphRedirect);
   });
 });

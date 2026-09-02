@@ -1,7 +1,10 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { WorkspaceOverview } from "@/features/workspaces/WorkspaceOverview";
+interface WorkspacePageProps {
+  params: Promise<{ workspaceSlug: string }>;
+}
 
-export default function WorkspacePage() {
-  return <WorkspaceOverview />;
+export default async function WorkspacePage({ params }: WorkspacePageProps) {
+  const { workspaceSlug } = await params;
+  redirect(`/workspaces/${encodeURIComponent(workspaceSlug)}/settings`);
 }

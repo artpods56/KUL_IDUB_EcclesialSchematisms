@@ -4,7 +4,6 @@ import * as React from "react";
 import { Popover } from "@base-ui/react/popover";
 import {
   ChevronsUpDown,
-  LayoutGrid,
   LoaderCircle,
   LogOut,
   Mail,
@@ -38,11 +37,7 @@ import {
   renameSavedGraphRemote,
 } from "./graph-actions";
 import { GraphRowMenu, promptGraphRename } from "./GraphRowMenu";
-import {
-  WorkspaceGraphPanel,
-  type WorkspaceGraphPanelCloseReason,
-  sortGraphsByRecency,
-} from "./WorkspaceGraphPanel";
+import { sortGraphsByRecency } from "./WorkspaceGraphPanel";
 
 interface WorkspaceContextValue {
   workspace: Workspace;
@@ -172,6 +167,7 @@ export function workspaceMobileContextLabel(
   if (pathname === "/" || pathname === "/graphs") return "Graphs";
   if (pathname === "/templates/new") return "Save template";
   if (pathname.startsWith("/templates")) return "Templates";
+  if (/^\/workspaces\/[^/]+\/settings\/?$/.test(pathname)) return "Settings";
   if (pathname === "/workspaces" || /^\/workspaces\/[^/]+\/?$/.test(pathname)) {
     return "Teams & access";
   }
@@ -260,10 +256,6 @@ export function WorkspaceRail({
   const [accountMenuPath, setAccountMenuPath] = React.useState<string | null>(
     null,
   );
-  const [graphPanelContext, setGraphPanelContext] = React.useState<{
-    pathname: string;
-    workspaceId: string;
-  } | null>(null);
   const [mobileNavigationPath, setMobileNavigationPath] = React.useState<
     string | null
   >(null);
@@ -279,7 +271,6 @@ export function WorkspaceRail({
   const [invitationMessage, setInvitationMessage] = React.useState<string | null>(null);
   const mobileMenuButtonRef = React.useRef<HTMLButtonElement>(null);
   const mobileRailRef = React.useRef<HTMLElement>(null);
-  const graphPanelTriggerRef = React.useRef<HTMLButtonElement>(null);
   const chrome = useWorkbenchChrome();
   const dragRef = React.useRef<{
     pointerId: number;
@@ -293,7 +284,6 @@ export function WorkspaceRail({
 
   const clearOverlayState = React.useCallback(() => {
     setAccountMenuPath(null);
-    setGraphPanelContext(null);
     setMobileNavigationPath(null);
   }, []);
 
@@ -310,24 +300,20 @@ export function WorkspaceRail({
     window.requestAnimationFrame(() => mobileMenuButtonRef.current?.focus());
   }, [clearOverlayState]);
 
-  const closeGraphPanel = React.useCallback(
-    (reason: WorkspaceGraphPanelCloseReason) => {
-      setGraphPanelContext(null);
-      const restoreFocus = reason === "close-button" || reason === "escape";
-      if (!restoreFocus) return;
-      window.requestAnimationFrame(() => {
-        const trigger = mobileViewport
-          ? mobileMenuButtonRef.current
-          : graphPanelTriggerRef.current;
-        trigger?.focus();
-      });
-    },
-    [mobileViewport],
-  );
+  const selectedWorkspace = resolveSelectedWorkspace(workspaces, activeSlug);
+  const activeWorkspace = activeSlug
+    ? workspaces.find((candidate) => candidate.slug === activeSlug)
+    : undefined;
 
   const goGraphs = () => {
     closeMobileNavigation(true);
-    router.push("/graphs");
+    if (!selectedWorkspace) {
+      router.push("/workspaces");
+      return;
+    }
+    router.push(
+      `/workspaces/${encodeURIComponent(selectedWorkspace.slug)}/graphs`,
+    );
   };
 
   const activateBrand = () => {
@@ -339,13 +325,14 @@ export function WorkspaceRail({
     }
   };
 
-  const selectedWorkspace = resolveSelectedWorkspace(workspaces, activeSlug);
-
   const onChangeWorkspace = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const slug = event.currentTarget.value;
     if (!slug) return;
     closeMobileNavigation(true);
-    router.push(`/workspaces/${encodeURIComponent(slug)}`);
+    const suffix = /^\/workspaces\/[^/]+\/settings\/?$/.test(pathname)
+      ? "/settings"
+      : "/graphs";
+    router.push(`/workspaces/${encodeURIComponent(slug)}${suffix}`);
   };
 
   const acceptInvitation = async (invitationId: string) => {
@@ -455,7 +442,6 @@ export function WorkspaceRail({
     );
     setMobileNavigationPath(null);
     setAccountMenuPath(null);
-    setGraphPanelContext(null);
     if (!focusWasInsideRail) return;
 
     window.requestAnimationFrame(() => {
@@ -540,20 +526,16 @@ export function WorkspaceRail({
   const email = session.email?.trim() || null;
   const visuallyCollapsed = previewCollapsed ?? collapsed;
   const mobileNavigationHidden = mobileViewport && !mobileOpen;
-  const graphBrowserActive = pathname === "/" || pathname === "/graphs";
-  const teamSettingsActive =
-    pathname === "/workspaces" ||
-    Boolean(
-      activeSlug &&
-      pathname === `/workspaces/${encodeURIComponent(activeSlug)}`,
-    );
-  const activeWorkspace = activeSlug
-    ? workspaces.find((candidate) => candidate.slug === activeSlug)
-    : undefined;
-  const graphPanelOpen = Boolean(
-    activeWorkspace &&
-    graphPanelContext?.workspaceId === activeWorkspace.id &&
-    graphPanelContext.pathname === pathname,
+  const graphBrowserActive = Boolean(
+    activeSlug &&
+      (pathname ===
+        `/workspaces/${encodeURIComponent(activeSlug)}/graphs` ||
+        pathname ===
+          `/workspaces/${encodeURIComponent(activeSlug)}/graphs/`),
+  );
+  const workspaceSettingsActive = Boolean(
+    activeSlug &&
+      pathname === `/workspaces/${encodeURIComponent(activeSlug)}/settings`,
   );
   const mobileContextLabel = workspaceMobileContextLabel(
     pathname,
@@ -641,7 +623,6 @@ export function WorkspaceRail({
               closeMobileNavigation(true);
             } else {
               setAccountMenuPath(null);
-              setGraphPanelContext(null);
               setMobileNavigationPath(pathname);
             }
           }}
@@ -818,80 +799,39 @@ export function WorkspaceRail({
               <span>New graph</span>
             </button>
           ) : null}
-          {activeWorkspace ? (
-            <>
-              <button
-                ref={graphPanelTriggerRef}
-                type="button"
-                data-graph-panel-trigger=""
-                aria-expanded={graphPanelOpen}
-                className={`grafy-workspace-rail__item${graphPanelOpen ? " is-active" : ""}`}
-                title={`Quickly switch graphs in ${workspaceDisplayName(activeWorkspace)}`}
-                onClick={() => {
-                  closeMobileNavigation(false);
-                  setGraphPanelContext(
-                    graphPanelOpen
-                      ? null
-                      : { pathname, workspaceId: activeWorkspace.id },
-                  );
-                }}
-              >
-                <LayoutGrid size={15} aria-hidden="true" />
-                <span>Quick switch</span>
-              </button>
-              {chrome ? (
-                <button
-                  type="button"
-                  className={`grafy-workspace-rail__item${chrome.isDirty ? " is-active" : ""}`}
-                  title={
-                    chrome.saving
-                      ? "Saving graph…"
-                      : chrome.isDirty || !chrome.activeGraphId
-                        ? "Save graph"
-                        : "All changes are saved"
-                  }
-                  disabled={!chrome.canSave}
-                  onClick={() => void chrome.save()}
-                >
-                  {chrome.saving ? (
-                    <LoaderCircle
-                      size={15}
-                      aria-hidden="true"
-                      className="grafy-workspace-rail__spin"
-                    />
-                  ) : (
-                    <Save size={15} aria-hidden="true" />
-                  )}
-                  <span>
-                    {chrome.saving
-                      ? "Saving…"
-                      : chrome.isDirty || !chrome.activeGraphId
-                        ? "Save"
-                        : "Saved"}
-                  </span>
-                </button>
-              ) : null}
-            </>
+          {activeWorkspace && chrome ? (
+            <button
+              type="button"
+              className={`grafy-workspace-rail__item${chrome.isDirty ? " is-active" : ""}`}
+              title={
+                chrome.saving
+                  ? "Saving graph…"
+                  : chrome.isDirty || !chrome.activeGraphId
+                    ? "Save graph"
+                    : "All changes are saved"
+              }
+              disabled={!chrome.canSave}
+              onClick={() => void chrome.save()}
+            >
+              {chrome.saving ? (
+                <LoaderCircle
+                  size={15}
+                  aria-hidden="true"
+                  className="grafy-workspace-rail__spin"
+                />
+              ) : (
+                <Save size={15} aria-hidden="true" />
+              )}
+              <span>
+                {chrome.saving
+                  ? "Saving…"
+                  : chrome.isDirty || !chrome.activeGraphId
+                    ? "Save"
+                    : "Saved"}
+              </span>
+            </button>
           ) : null}
         </nav>
-
-        {activeWorkspace ? (
-          <nav className="grafy-workspace-rail__nav" aria-label="Graph location">
-            <p className="grafy-workspace-rail__section-label">Location</p>
-            <div
-              className="grafy-workspace-rail__item grafy-workspace-rail__location"
-              title={`Current location · ${workspaceDisplayName(activeWorkspace)}`}
-              aria-label={`Current graph location ${workspaceDisplayName(activeWorkspace)}`}
-            >
-              {activeWorkspace.kind === "personal" ? (
-                <Workflow size={15} aria-hidden="true" />
-              ) : (
-                <Users size={15} aria-hidden="true" />
-              )}
-              <span>{workspaceDisplayName(activeWorkspace)}</span>
-            </div>
-          </nav>
-        ) : null}
 
         {activeWorkspace && !visuallyCollapsed && recentGraphs.length ? (
           <nav
@@ -917,7 +857,6 @@ export function WorkspaceRail({
                       );
                     }}
                   >
-                    <Workflow size={15} aria-hidden="true" />
                     <span>{graph.name}</span>
                   </button>
                   <GraphRowMenu
@@ -934,15 +873,20 @@ export function WorkspaceRail({
 
         <button
           type="button"
-          className={`grafy-workspace-rail__settings${teamSettingsActive ? " is-active" : ""}`}
+          className={`grafy-workspace-rail__settings${workspaceSettingsActive ? " is-active" : ""}`}
           onClick={() => {
             closeMobileNavigation(true);
-            router.push("/workspaces");
+            if (selectedWorkspace) {
+              router.push(
+                `/workspaces/${encodeURIComponent(selectedWorkspace.slug)}/settings`,
+              );
+            }
           }}
-          title="Teams & access"
+          title="Settings"
+          disabled={!selectedWorkspace}
         >
           <Settings size={15} aria-hidden="true" />
-          <span>Teams &amp; access</span>
+          <span>Settings</span>
         </button>
 
         <div className="grafy-workspace-rail__footer">
@@ -950,7 +894,6 @@ export function WorkspaceRail({
             open={accountMenuOpen}
             onOpenChange={(open) => {
               setAccountMenuPath(open ? pathname : null);
-              if (open) setGraphPanelContext(null);
             }}
           >
             <Popover.Trigger
@@ -1024,18 +967,6 @@ export function WorkspaceRail({
         />
       </aside>
 
-      {graphPanelOpen && activeWorkspace ? (
-        <WorkspaceGraphPanel
-          key={activeWorkspace.id}
-          workspaceId={activeWorkspace.id}
-          workspaceSlug={activeWorkspace.slug}
-          activeGraphId={activeGraphId}
-          busyGraphId={graphActionBusyId}
-          onRename={(graph) => void renameGraph(graph)}
-          onDelete={(graph) => void deleteGraph(graph)}
-          onClose={closeGraphPanel}
-        />
-      ) : null}
     </>
   );
 }

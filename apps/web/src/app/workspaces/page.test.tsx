@@ -69,13 +69,13 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-it("presents workspace tenancy as secondary Teams and location settings", async () => {
+it("presents the workspace directory as separate administration", async () => {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
   await act(async () => root.render(<WorkspacesPage />));
 
-  expect(container.querySelector("h1")?.textContent).toBe("Teams & access");
+  expect(container.querySelector("h1")?.textContent).toBe("Workspace directory");
   expect(container.textContent).toContain("My graphs");
   expect(container.textContent).toContain("Atlas");
   expect(container.textContent).not.toContain("hidden-personal-slug");

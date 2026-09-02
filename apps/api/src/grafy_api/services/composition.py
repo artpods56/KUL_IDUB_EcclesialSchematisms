@@ -1,6 +1,7 @@
 """Composition root for workbench-facing application components."""
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -99,6 +100,7 @@ def build_workbench_components(
     max_active_executions: int = 2,
     max_pending_graphs: int = 20,
     max_active_plugin_invocations: int = 4,
+    plugin_invocation_wall_time_seconds_by_slug: Mapping[str, int] | None = None,
     workspace: Path | None = None,
     unit_of_work: WorkbenchUnitOfWorkPort | None = None,
     storage: FileStoragePort | None = None,
@@ -204,6 +206,9 @@ def build_workbench_components(
                 bucket=bucket,
                 storage_backend=storage_backend,
                 max_concurrent_invocations=max_active_plugin_invocations,
+                wall_time_seconds_by_plugin_slug=(
+                    plugin_invocation_wall_time_seconds_by_slug
+                ),
                 node_secrets=resolved_node_secrets,
                 uploads_dir=uploads_dir,
             )

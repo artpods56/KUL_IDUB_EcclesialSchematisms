@@ -5,20 +5,14 @@ import * as stylex from "@stylexjs/stylex";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
-  Box,
   Cable,
   ExternalLink,
-  Database,
-  Image as ImageIcon,
   LayoutGrid,
   LibraryBig,
-  MapPin,
+  Package,
   Plus,
   Search,
   Settings2,
-  Sparkles,
-  Table2,
-  Type,
   Workflow,
 } from "lucide-react";
 
@@ -60,34 +54,20 @@ import {
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import {
   buildCatalogFilters,
+  buildSourceFilters,
   catalogNodeKey,
   catalogNodeSpecs,
-  catalogOriginGroups,
   filterAndSearchCatalogNodes,
+  INPUT_NODES_FILTER,
   moduleReleaseSpecs,
   nodesCompatibleWithPort,
+  sourceFilterId,
   sortCatalogNodes,
   type CatalogFilter,
 } from "../model/node-catalog";
 
 const MODULE_PLUGIN_SLUG = "graph.module";
 const MOBILE_NODE_SELECTOR_QUERY = "(max-width: 720px)";
-
-type BrowserFilterId =
-  | "all"
-  | "text"
-  | "images"
-  | "tables"
-  | "spatial"
-  | "prompts"
-  | "sequences"
-  | "workspace-library";
-
-interface BrowserFilter {
-  id: BrowserFilterId;
-  title: string;
-  sourceFilters: readonly CatalogFilter[];
-}
 
 /** A port-scoped Add node invocation using the same routes as canvas wiring. */
 export type NodeSelectorCompatibilityContext =
@@ -290,98 +270,10 @@ function fieldConstraintLabel(field: SchemaField): string {
   return constraints.join(" · ");
 }
 
-function buildBrowserFilters(filters: readonly CatalogFilter[]): BrowserFilter[] {
-  const artifactFilters = filters.filter((filter) => filter.kind === "artifact");
-
-  return [
-    {
-      id: "all",
-      title: "All",
-      sourceFilters: filters.filter((filter) => filter.kind === "all"),
-    },
-    {
-      id: "text",
-      title: "Text",
-      sourceFilters: artifactFilters.filter(
-        (filter) => filter.artifactKey && (
-          filter.artifactKey.id === "scalar.text" ||
-          filter.artifactKey.id.startsWith("text.")
-        ),
-      ),
-    },
-    {
-      id: "images",
-      title: "Images",
-      sourceFilters: artifactFilters.filter(
-        (filter) => filter.artifactKey?.id.startsWith("image."),
-      ),
-    },
-    {
-      id: "tables",
-      title: "Tables",
-      sourceFilters: artifactFilters.filter(
-        (filter) => filter.artifactKey?.id.startsWith("table."),
-      ),
-    },
-    {
-      id: "spatial",
-      title: "Spatial",
-      sourceFilters: artifactFilters.filter(
-        (filter) => filter.artifactKey?.id.startsWith("geo."),
-      ),
-    },
-    {
-      id: "prompts",
-      title: "Prompts",
-      sourceFilters: artifactFilters.filter(
-        (filter) => filter.artifactKey?.id.startsWith("prompt."),
-      ),
-    },
-    {
-      id: "sequences",
-      title: "Sequences",
-      sourceFilters: filters.filter((filter) => filter.kind === "sequence"),
-    },
-    {
-      id: "workspace-library",
-      title: "Workspace library",
-      sourceFilters: filters.filter(
-        (filter) => filter.kind === "workspace-library",
-      ),
-    },
-  ];
-}
-
-function nodesForBrowserFilter(
-  nodes: readonly NodeSpec[],
-  filter: BrowserFilter,
-  query: string,
-  registry: NodeRegistry,
-): NodeSpec[] {
-  const unique = new Map<string, NodeSpec>();
-  for (const sourceFilter of filter.sourceFilters) {
-    for (const spec of filterAndSearchCatalogNodes(
-      nodes,
-      sourceFilter,
-      query,
-      registry,
-    )) {
-      unique.set(nodeKey(spec), spec);
-    }
-  }
-  return sortCatalogNodes([...unique.values()]);
-}
-
-function BrowserFilterIcon({ filter }: { filter: BrowserFilter }) {
+function SourceFilterIcon({ filter }: { filter: CatalogFilter }) {
   if (filter.id === "all") return <LayoutGrid size={14} />;
-  if (filter.id === "text") return <Type size={14} />;
-  if (filter.id === "images") return <ImageIcon size={14} />;
-  if (filter.id === "tables") return <Table2 size={14} />;
-  if (filter.id === "spatial") return <MapPin size={14} />;
-  if (filter.id === "prompts") return <Sparkles size={14} />;
-  if (filter.id === "sequences") return <Database size={14} />;
   if (filter.id === "workspace-library") return <LibraryBig size={14} />;
-  return <Box size={14} />;
+  return <Package size={14} />;
 }
 
 const s = stylex.create({
@@ -570,6 +462,58 @@ const s = stylex.create({
     borderTopStyle: "solid",
     borderTopColor: tokens.colorBorder,
   },
+  refinementSection: {
+    marginTop: {
+      default: "12px",
+      "@media (max-width: 720px)": 0,
+    },
+    paddingTop: {
+      default: "12px",
+      "@media (max-width: 720px)": 0,
+    },
+    borderTopWidth: {
+      default: 1,
+      "@media (max-width: 720px)": 0,
+    },
+    borderTopStyle: "solid",
+    borderTopColor: tokens.colorBorder,
+    display: "grid",
+    gap: "10px",
+    paddingInline: "10px",
+  },
+  refinementField: {
+    display: "grid",
+    gap: "4px",
+    color: tokens.colorSubtle,
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 730,
+  },
+  refinementSelect: {
+    width: "100%",
+    minHeight: "32px",
+    padding: "0 8px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorderStrong,
+    borderRadius: tokens.radiusSm,
+    backgroundColor: tokens.colorSurfaceSunken,
+    color: tokens.colorText,
+    fontSize: tokens.fontSizeSm,
+    cursor: "pointer",
+    outlineColor: tokens.colorAccent,
+    outlineStyle: "solid",
+    outlineOffset: "2px",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
+  },
+  refinementCheck: {
+    display: "flex",
+    alignItems: "center",
+    gap: "7px",
+    color: tokens.colorSubtle,
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 640,
+    cursor: "pointer",
+  },
   nodePane: {
     gridArea: "nodes",
     minWidth: 0,
@@ -711,12 +655,6 @@ const s = stylex.create({
     backgroundColor: tokens.colorAccentSoft,
   },
   nodeCopy: { minWidth: 0, display: "grid", gap: "5px" },
-  originGroup: {
-    padding: "10px 16px 4px",
-    color: tokens.colorSubtle,
-    fontSize: tokens.fontSizeXs,
-    fontWeight: 650,
-  },
   nodeTitleRow: {
     minWidth: 0,
     display: "flex",
@@ -1378,8 +1316,14 @@ export function NodeSelector({
   const mobileNodeSelector = useMediaQuery(MOBILE_NODE_SELECTOR_QUERY);
   const finePointer = useMediaQuery(FINE_POINTER_QUERY);
   const [query, setQuery] = React.useState("");
-  const [filterId, setFilterId] = React.useState<BrowserFilterId>("all");
-  const [selectedNodeKey, setSelectedNodeKey] = React.useState<string | null>(null);
+  const [activeSourceId, setActiveSourceId] = React.useState<string>("all");
+  const [artifactFilterId, setArtifactFilterId] = React.useState<string | null>(
+    null,
+  );
+  const [inputNodesOnly, setInputNodesOnly] = React.useState(false);
+  const [selectedNodeKey, setSelectedNodeKey] = React.useState<string | null>(
+    null,
+  );
   const [selectedRelease, setSelectedRelease] = React.useState<{
     moduleKey: string;
     releaseKey: string;
@@ -1388,7 +1332,7 @@ export function NodeSelector({
   const [compatibilityPortSelection, setCompatibilityPortSelection] =
     React.useState<{ specKey: string; portKey: string } | null>(null);
   const resultRefs = React.useRef(new Map<string, HTMLButtonElement>());
-  const filterRefs = React.useRef(new Map<BrowserFilterId, HTMLButtonElement>());
+  const filterRefs = React.useRef(new Map<string, HTMLButtonElement>());
   const dialogRef = React.useRef<HTMLDivElement>(null);
   const searchRef = React.useRef<HTMLInputElement>(null);
   const pendingResultFocusKey = React.useRef<string | null>(null);
@@ -1398,13 +1342,26 @@ export function NodeSelector({
     () => buildCatalogFilters(registry),
     [registry],
   );
-  const browserFilters = React.useMemo(
-    () => buildBrowserFilters(catalogFilters),
+  const sourceFilters = React.useMemo(
+    () => buildSourceFilters(registry),
+    [registry],
+  );
+  const artifactOptions = React.useMemo(
+    () => catalogFilters.filter((filter) => filter.kind === "artifact"),
     [catalogFilters],
   );
-  const activeFilter =
-    browserFilters.find((filter) => filter.id === filterId) ??
-    browserFilters[0]!;
+  const activeSourceFilter =
+    sourceFilters.find((filter) => filter.id === activeSourceId) ??
+    sourceFilters[0]!;
+  const activeArtifactFilter =
+    artifactOptions.find((filter) => filter.id === artifactFilterId) ?? null;
+  const refinementFilters = React.useMemo(
+    () => [
+      ...(activeArtifactFilter ? [activeArtifactFilter] : []),
+      ...(inputNodesOnly ? [INPUT_NODES_FILTER] : []),
+    ],
+    [activeArtifactFilter, inputNodesOnly],
+  );
 
   const catalogNodes = React.useMemo(
     () => catalogNodeSpecs(registry, activeGraphId),
@@ -1420,7 +1377,7 @@ export function NodeSelector({
     () => ({ ...registry, nodes: catalogNodes }),
     [catalogNodes, registry],
   );
-  const showingModules = activeFilter.id === "workspace-library";
+  const showingModules = activeSourceId === "workspace-library";
   const activeEditingModule = React.useMemo(
     () =>
       activeGraphId
@@ -1436,7 +1393,9 @@ export function NodeSelector({
   React.useEffect(() => {
     if (open && !wasOpen.current) {
       setQuery("");
-      setFilterId("all");
+      setActiveSourceId("all");
+      setArtifactFilterId(null);
+      setInputNodesOnly(false);
       setSelectedNodeKey(null);
       setSelectedRelease(null);
       setTechnicalDetailsOpen(false);
@@ -1446,25 +1405,23 @@ export function NodeSelector({
   }, [open]);
 
   const normalizedQuery = query.trim().toLowerCase();
-  const filteredNodes = React.useMemo(
-    () => {
-      if (loading || errorMessage) return [];
-      return nodesForBrowserFilter(
-        compatibleCatalogNodes,
-        activeFilter,
-        query,
-        registry,
-      );
-    },
-    [
-      activeFilter,
+  const filteredNodes = React.useMemo(() => {
+    if (loading || errorMessage) return [];
+    return filterAndSearchCatalogNodes(
       compatibleCatalogNodes,
-      errorMessage,
-      loading,
+      [activeSourceFilter, ...refinementFilters],
       query,
       registry,
-    ],
-  );
+    );
+  }, [
+    activeSourceFilter,
+    compatibleCatalogNodes,
+    errorMessage,
+    loading,
+    query,
+    refinementFilters,
+    registry,
+  ]);
   const listedSpec = filteredNodes.find(
     (spec) => nodeKey(spec) === selectedNodeKey,
   ) ?? filteredNodes[0] ?? null;
@@ -1530,7 +1487,12 @@ export function NodeSelector({
   const selectedPrimaryOutputArtifact = selectedPrimaryOutput
     ? portArtifactType(selectedPrimaryOutput)
     : null;
-  const activeFilterTitle = activeFilter.title;
+  const resultsTitle =
+    activeSourceFilter.id === "all"
+      ? "All nodes"
+      : activeSourceFilter.id === "workspace-library"
+        ? "Workspace library"
+        : `${activeSourceFilter.title} nodes`;
   const isModuleSelection = selectedPlugin?.entry_kind === "module";
   const isDeprecatedModule = selectedSpec?.publication_state === "deprecated";
   const selectionCanInsert = canInsert && selectedSpec?.runnable !== false;
@@ -1554,21 +1516,18 @@ export function NodeSelector({
         ? "No nodes found."
         : `${filteredNodes.length} ${filteredNodes.length === 1 ? "node" : "nodes"}.`;
 
-  const selectFilter = (nextFilter: BrowserFilter) => {
-    setFilterId(nextFilter.id);
+  const selectSource = (id: string) => {
+    setActiveSourceId(id);
     setSelectedNodeKey(null);
     setTechnicalDetailsOpen(false);
     setCompatibilityPortSelection(null);
   };
 
-  const focusFilterAt = (index: number) => {
-    const boundedIndex = Math.max(
-      0,
-      Math.min(index, browserFilters.length - 1),
-    );
-    const nextFilter = browserFilters[boundedIndex];
+  const focusSourceAt = (index: number) => {
+    const boundedIndex = Math.max(0, Math.min(index, sourceFilters.length - 1));
+    const nextFilter = sourceFilters[boundedIndex];
     if (!nextFilter) return;
-    selectFilter(nextFilter);
+    selectSource(nextFilter.id);
     filterRefs.current.get(nextFilter.id)?.focus();
   };
 
@@ -1599,9 +1558,13 @@ export function NodeSelector({
     const key = nodeKey(spec);
     pendingResultFocusKey.current = key;
     setQuery("");
-    setFilterId(
-      spec.plugin_slug === MODULE_PLUGIN_SLUG ? "workspace-library" : "all",
+    setActiveSourceId(
+      spec.plugin_slug === MODULE_PLUGIN_SLUG
+        ? "workspace-library"
+        : sourceFilterId(spec.plugin_slug),
     );
+    setArtifactFilterId(null);
+    setInputNodesOnly(false);
     setSelectedNodeKey(key);
     setSelectedRelease(null);
     setTechnicalDetailsOpen(false);
@@ -1615,7 +1578,13 @@ export function NodeSelector({
     const option = resultRefs.current.get(key);
     option?.scrollIntoView?.({ block: "nearest" });
     option?.focus();
-  }, [filterId, query, selectedNodeKey]);
+  }, [
+    activeSourceId,
+    artifactFilterId,
+    inputNodesOnly,
+    query,
+    selectedNodeKey,
+  ]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1670,19 +1639,19 @@ export function NodeSelector({
         </div>
 
         <div {...stylex.props(s.layout)}>
-          <nav aria-label="Works with" {...stylex.props(s.filterPane)}>
-            <h3 {...stylex.props(s.filterHeading)}>Works with</h3>
+          <nav aria-label="Node filters" {...stylex.props(s.filterPane)}>
+            <h3 {...stylex.props(s.filterHeading)}>Source</h3>
             <div
               role="toolbar"
-              aria-label="Node filters"
+              aria-label="Node sources"
               aria-orientation={mobileNodeSelector ? "horizontal" : "vertical"}
               {...stylex.props(s.categoryToolbar)}
             >
-              {browserFilters.map((filter, index) => {
-                const active = filter.id === activeFilter.id;
-                const count = nodesForBrowserFilter(
+              {sourceFilters.map((filter, index) => {
+                const active = filter.id === activeSourceId;
+                const count = filterAndSearchCatalogNodes(
                   compatibleCatalogNodes,
-                  filter,
+                  [filter, ...refinementFilters],
                   "",
                   registry,
                 ).length;
@@ -1700,24 +1669,30 @@ export function NodeSelector({
                       s.categoryButton,
                       active ? s.categoryButtonActive : null,
                     )}
-                    onClick={() => selectFilter(filter)}
+                    onClick={() => selectSource(filter.id)}
                     onKeyDown={(event) => {
-                      if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+                      if (
+                        event.key === "ArrowDown" ||
+                        event.key === "ArrowRight"
+                      ) {
                         event.preventDefault();
-                        focusFilterAt(index + 1);
-                      } else if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+                        focusSourceAt(index + 1);
+                      } else if (
+                        event.key === "ArrowUp" ||
+                        event.key === "ArrowLeft"
+                      ) {
                         event.preventDefault();
-                        focusFilterAt(index - 1);
+                        focusSourceAt(index - 1);
                       } else if (event.key === "Home") {
                         event.preventDefault();
-                        focusFilterAt(0);
+                        focusSourceAt(0);
                       } else if (event.key === "End") {
                         event.preventDefault();
-                        focusFilterAt(browserFilters.length - 1);
+                        focusSourceAt(sourceFilters.length - 1);
                       }
                     }}
                   >
-                    <BrowserFilterIcon filter={filter} />
+                    <SourceFilterIcon filter={filter} />
                     {filter.title}
                   </button>
                 );
@@ -1726,9 +1701,43 @@ export function NodeSelector({
                     {filterButton}
                   </div>
                 ) : (
-                  <React.Fragment key={filter.id}>{filterButton}</React.Fragment>
+                  <React.Fragment key={filter.id}>
+                    {filterButton}
+                  </React.Fragment>
                 );
               })}
+            </div>
+            <div {...stylex.props(s.refinementSection)}>
+              <label {...stylex.props(s.refinementField)}>
+                <span>Artifact</span>
+                <select
+                  aria-label="Artifact type"
+                  value={artifactFilterId ?? ""}
+                  {...stylex.props(s.refinementSelect)}
+                  onChange={(event) => {
+                    setArtifactFilterId(event.currentTarget.value || null);
+                    setSelectedNodeKey(null);
+                  }}
+                >
+                  <option value="">Any artifact</option>
+                  {artifactOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label {...stylex.props(s.refinementCheck)}>
+                <input
+                  type="checkbox"
+                  checked={inputNodesOnly}
+                  onChange={(event) => {
+                    setInputNodesOnly(event.currentTarget.checked);
+                    setSelectedNodeKey(null);
+                  }}
+                />
+                Input nodes only
+              </label>
             </div>
           </nav>
 
@@ -1736,13 +1745,7 @@ export function NodeSelector({
             <header {...stylex.props(s.nodePaneHeader)}>
               <div {...stylex.props(s.resultHeading)}>
                 <h3 id="node-selector-results-heading" {...stylex.props(s.nodePaneTitle)}>
-                  {activeFilter.id === "all"
-                    ? "All nodes"
-                    : ["text", "images", "tables", "spatial", "prompts"].includes(
-                        activeFilter.id,
-                      )
-                      ? `${activeFilterTitle} nodes`
-                      : activeFilterTitle}
+                  {resultsTitle}
                 </h3>
                 <span
                   role={errorMessage ? "alert" : "status"}
@@ -1780,80 +1783,80 @@ export function NodeSelector({
                 </div>
               ) : loading ? (
                 <div {...stylex.props(s.empty)}>Loading nodes…</div>
-              ) : filteredNodes.length ? catalogOriginGroups(filteredNodes).map((group) => (
-                <React.Fragment key={group.origin}>
-                  <div {...stylex.props(s.originGroup)}>{group.title}</div>
-                  {group.nodes.map((spec) => {
-                const key = nodeKey(spec);
-                const index = filteredNodes.findIndex(
-                  (candidate) => nodeKey(candidate) === key,
-                );
-                const active = listedSpec
-                  ? key === nodeKey(listedSpec)
-                  : false;
-                const representativePort = spec.outputs[0] ?? spec.inputs[0];
-                const representativeArtifact = representativePort
-                  ? portArtifactType(representativePort)
-                  : null;
-                return (
-                  <button
-                    key={key}
-                    id={`node-selector-result-${key}`}
-                    ref={(element) => {
-                      if (element) resultRefs.current.set(key, element);
-                      else resultRefs.current.delete(key);
-                    }}
-                    type="button"
-                    role="option"
-                    tabIndex={active ? 0 : -1}
-                    aria-selected={active}
-                    {...stylex.props(
-                      s.nodeRow,
-                      active ? s.nodeRowActive : null,
-                    )}
-                    style={active && representativeArtifact ? {
-                      borderColor: artifactTypeColor(
-                        representativeArtifact.id,
-                        tokens.colorAccent,
-                      ),
-                    } : undefined}
-                    onClick={() => {
-                      setSelectedNodeKey(key);
-                      setTechnicalDetailsOpen(false);
-                    }}
-                    onFocus={() => setSelectedNodeKey(key)}
-                    onKeyDown={(event) => {
-                      if (event.key === "ArrowDown") {
-                        event.preventDefault();
-                        focusResultAt(index + 1);
-                      } else if (event.key === "ArrowUp") {
-                        event.preventDefault();
-                        focusResultAt(index - 1);
-                      } else if (event.key === "Home") {
-                        event.preventDefault();
-                        focusResultAt(0);
-                      } else if (event.key === "End") {
-                        event.preventDefault();
-                        focusResultAt(filteredNodes.length - 1);
-                      } else if (event.key === "Enter") {
-                        event.preventDefault();
-                        if (selectedSpec) insertNode(selectedSpec);
+              ) : filteredNodes.length ? (
+                filteredNodes.map((spec, index) => {
+                  const key = nodeKey(spec);
+                  const active = listedSpec
+                    ? key === nodeKey(listedSpec)
+                    : false;
+                  const representativePort = spec.outputs[0] ?? spec.inputs[0];
+                  const representativeArtifact = representativePort
+                    ? portArtifactType(representativePort)
+                    : null;
+                  return (
+                    <button
+                      key={key}
+                      id={`node-selector-result-${key}`}
+                      ref={(element) => {
+                        if (element) resultRefs.current.set(key, element);
+                        else resultRefs.current.delete(key);
+                      }}
+                      type="button"
+                      role="option"
+                      tabIndex={active ? 0 : -1}
+                      aria-selected={active}
+                      {...stylex.props(
+                        s.nodeRow,
+                        active ? s.nodeRowActive : null,
+                      )}
+                      style={
+                        active && representativeArtifact
+                          ? {
+                              borderColor: artifactTypeColor(
+                                representativeArtifact.id,
+                                tokens.colorAccent,
+                              ),
+                            }
+                          : undefined
                       }
-                    }}
-                  >
-                    <span {...stylex.props(s.nodeCopy)}>
-                      <span {...stylex.props(s.nodeTitleRow)}>
-                        <span {...stylex.props(s.nodeTitle)}>{spec.title}</span>
+                      onClick={() => {
+                        setSelectedNodeKey(key);
+                        setTechnicalDetailsOpen(false);
+                      }}
+                      onFocus={() => setSelectedNodeKey(key)}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          focusResultAt(index + 1);
+                        } else if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          focusResultAt(index - 1);
+                        } else if (event.key === "Home") {
+                          event.preventDefault();
+                          focusResultAt(0);
+                        } else if (event.key === "End") {
+                          event.preventDefault();
+                          focusResultAt(filteredNodes.length - 1);
+                        } else if (event.key === "Enter") {
+                          event.preventDefault();
+                          if (selectedSpec) insertNode(selectedSpec);
+                        }
+                      }}
+                    >
+                      <span {...stylex.props(s.nodeCopy)}>
+                        <span {...stylex.props(s.nodeTitleRow)}>
+                          <span {...stylex.props(s.nodeTitle)}>
+                            {spec.title}
+                          </span>
+                        </span>
+                        <span {...stylex.props(s.nodeDescription)}>
+                          {spec.description || "No description is available."}
+                        </span>
                       </span>
-                      <span {...stylex.props(s.nodeDescription)}>
-                        {spec.description || "No description is available."}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
-                </React.Fragment>
-              )) : (
+                    </button>
+                  );
+                })
+              ) : (
                 <div {...stylex.props(s.empty)}>
                   <span>
                     {compatibility
@@ -1862,16 +1865,19 @@ export function NodeSelector({
                         ? "No published Modules match the current search."
                         : "No nodes match the current search or filter."}
                   </span>
-                  {normalizedQuery || activeFilter.id !== "all" ? (
+                  {normalizedQuery ||
+                  activeSourceId !== "all" ||
+                  artifactFilterId !== null ||
+                  inputNodesOnly ? (
                     <button
                       type="button"
                       {...stylex.props(s.resetButton)}
                       onClick={() => {
                         setQuery("");
-                        selectFilter(
-                          browserFilters.find((filter) => filter.id === "all") ??
-                            browserFilters[0]!,
-                        );
+                        setActiveSourceId("all");
+                        setArtifactFilterId(null);
+                        setInputNodesOnly(false);
+                        setSelectedNodeKey(null);
                       }}
                     >
                       Reset search and filter

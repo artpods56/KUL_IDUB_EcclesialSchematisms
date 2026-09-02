@@ -21,6 +21,11 @@ export type WorkspaceInvitationForRecipient =
   Schemas["WorkspaceInvitationRecipientResponse"];
 export type WorkspaceCapability = Schemas["WorkspaceCapability"];
 export type WorkspaceRole = Schemas["WorkspaceRole"];
+export type PersonalAccessToken = Schemas["PersonalAccessTokenResponse"];
+export type PersonalAccessTokenCreated =
+  Schemas["PersonalAccessTokenCreatedResponse"];
+export type PersonalAccessTokenCreateRequest =
+  Schemas["PersonalAccessTokenCreateRequest"];
 
 export type ArtifactTypeKey =
   Schemas["ArtifactTypeKeyResponse"];

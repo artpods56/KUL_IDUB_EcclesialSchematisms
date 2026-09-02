@@ -35,7 +35,10 @@ export function WorkspaceOverview() {
             <WorkspaceMembersDialog />
           ) : null}
           <WorkspaceLibraryDialog workspace={workspace} triggerLabel="Modules" />
-          <Link className="grafy-workspace-button" href="/graphs">
+          <Link
+            className="grafy-workspace-button"
+            href={`/workspaces/${encodeURIComponent(workspace.slug)}/graphs`}
+          >
             Browse graphs <ArrowUpRight size={14} aria-hidden="true" />
           </Link>
         </div>

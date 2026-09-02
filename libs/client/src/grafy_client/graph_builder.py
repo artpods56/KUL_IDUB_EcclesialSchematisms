@@ -1,8 +1,9 @@
+import json
 import re
 from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import ValidationError
 
@@ -17,6 +18,7 @@ from grafy_core.domain.saved_graphs import (
     SavedGraphNode,
 )
 from grafy_core.nodes import ArtifactTypeVariable, Node
+from grafy_core.schema_contracts import validate_json_schema_value
 
 from .models import CatalogConversion, CatalogNode, NodeCatalog
 
@@ -62,11 +64,11 @@ class OutputHandle:
 @dataclass(slots=True)
 class _AuthoredNode:
     handle: NodeHandle
-    node_class: type[Node[Any, Any, Any]]
-    config: NodeConfig
     catalog_node: CatalogNode
+    config: dict[str, object]
     bindings: dict[str, ArtifactTypeKey]
     input_plugs: list[SavedGraphInputPlug]
+    position: GraphPoint | None
 
 
 def _node_kind(catalog_node: CatalogNode) -> Literal["builtin", "plugin", "module"]:
@@ -82,19 +84,12 @@ def _node_kind(catalog_node: CatalogNode) -> Literal["builtin", "plugin", "modul
     return "builtin"
 
 
-def _artifact_type_variables(
-    node_class: type[Node[Any, Any, Any]],
-) -> set[str]:
+def _artifact_type_variables(catalog_node: CatalogNode) -> set[str]:
     variables = {
-        port.accepts.name
-        for port in node_class.input_contract.ports.values()
-        if isinstance(port.accepts, ArtifactTypeVariable)
+        port.artifact_type_variable
+        for port in (*catalog_node.inputs, *catalog_node.outputs)
+        if port.artifact_type_variable is not None
     }
-    variables.update(
-        port.produces.name
-        for port in node_class.output_contract.ports.values()
-        if isinstance(port.produces, ArtifactTypeVariable)
-    )
     return variables
 
 
@@ -115,6 +110,7 @@ class GraphBuilder:
         config: ConfigT,
         *,
         bindings: Mapping[str, ArtifactTypeKey] | None = None,
+        position: GraphPoint | None = None,
     ) -> NodeHandle:
         matching = [
             node
@@ -130,26 +126,14 @@ class GraphBuilder:
                 f"{node_class.operator_id}@{node_class.operator_version}"
             )
         catalog_node = matching[0]
-        if not catalog_node.runnable:
-            reason = catalog_node.non_runnable_reason or "unknown"
-            detail = (
-                "" if catalog_node.non_runnable_detail is None else
-                f": {catalog_node.non_runnable_detail}"
-            )
-            raise GraphBuilderError(
-                f"Plugin node {node_class.operator_id}@"
-                f"{node_class.operator_version} is not runnable ({reason}){detail}"
-            )
-        origin = catalog_node.origin
-        if origin == "plugin" and catalog_node.plugin_release is None:
-            raise GraphBuilderError(
-                f"Catalog node {node_class.operator_id}@"
-                f"{node_class.operator_version} has no exact Plugin release pin"
-            )
-        if catalog_node.config_schema != node_class.config_contract.model.model_json_schema():
+        if (
+            catalog_node.config_schema
+            != node_class.config_contract.model.model_json_schema()
+        ):
             raise GraphBuilderError(
                 f"Local node class {node_class.operator_id}@"
-                f"{node_class.operator_version} does not match the catalog config contract"
+                f"{node_class.operator_version} does not match the catalog config "
+                "contract"
             )
         if (
             catalog_node.input_schema
@@ -239,30 +223,109 @@ class GraphBuilder:
                     f"{node_class.operator_version}: {exc}"
                 ) from exc
 
+        return self._append_node(
+            catalog_node,
+            config.model_dump(mode="json"),
+            bindings=bindings,
+            position=position,
+        )
+
+    def add_catalog_node(
+        self,
+        operator_id: str,
+        config: Mapping[str, object],
+        *,
+        operator_version: int | None = None,
+        plugin_slug: str | None = None,
+        bindings: Mapping[str, ArtifactTypeKey] | None = None,
+        position: GraphPoint | None = None,
+    ) -> NodeHandle:
+        matching = [
+            node
+            for node in self._catalog.nodes
+            if node.operator_id == operator_id
+            and (operator_version is None or node.operator_version == operator_version)
+            and (plugin_slug is None or node.plugin_slug == plugin_slug)
+        ]
+        if len(matching) != 1:
+            version = "" if operator_version is None else f"@{operator_version}"
+            plugin = "" if plugin_slug is None else f" from Plugin {plugin_slug!r}"
+            raise GraphBuilderError(
+                "Workspace catalog does not expose exactly one node "
+                f"{operator_id}{version}{plugin}"
+            )
+        catalog_node = matching[0]
+        config_payload = dict(config)
+        try:
+            validate_json_schema_value(
+                json.dumps(catalog_node.config_schema, ensure_ascii=False),
+                config_payload,
+            )
+        except ValueError as exc:
+            raise GraphBuilderError(
+                f"Invalid configuration for {catalog_node.operator_id}@"
+                f"{catalog_node.operator_version}: {exc}"
+            ) from exc
+        return self._append_node(
+            catalog_node,
+            config_payload,
+            bindings=bindings,
+            position=position,
+        )
+
+    def _append_node(
+        self,
+        catalog_node: CatalogNode,
+        config: dict[str, object],
+        *,
+        bindings: Mapping[str, ArtifactTypeKey] | None,
+        position: GraphPoint | None,
+    ) -> NodeHandle:
+        if not catalog_node.runnable:
+            reason = catalog_node.non_runnable_reason or "unknown"
+            detail = (
+                ""
+                if catalog_node.non_runnable_detail is None
+                else f": {catalog_node.non_runnable_detail}"
+            )
+            raise GraphBuilderError(
+                f"Plugin node {catalog_node.operator_id}@"
+                f"{catalog_node.operator_version} is not runnable ({reason}){detail}"
+            )
+        if catalog_node.origin == "plugin" and catalog_node.plugin_release is None:
+            raise GraphBuilderError(
+                f"Catalog node {catalog_node.operator_id}@"
+                f"{catalog_node.operator_version} has no exact Plugin release pin"
+            )
+
         node_number = len(self._nodes) + 1
-        slug = re.sub(r"[^a-z0-9]+", "-", node_class.operator_id.lower()).strip("-")
+        slug = re.sub(
+            r"[^a-z0-9]+",
+            "-",
+            catalog_node.operator_id.lower(),
+        ).strip("-")
         handle = NodeHandle(
             node_id=f"node-{node_number:04d}-{slug}",
             builder_identity=self._identity,
         )
         explicit_bindings = dict(bindings or {})
         unknown_bindings = sorted(
-            set(explicit_bindings) - _artifact_type_variables(node_class)
+            set(explicit_bindings) - _artifact_type_variables(catalog_node)
         )
         if unknown_bindings:
             raise GraphBuilderError(
-                f"Node {node_class.operator_id}@{node_class.operator_version} "
+                f"Node {catalog_node.operator_id}@{catalog_node.operator_version} "
                 "received unknown artifact type bindings: "
                 + ", ".join(unknown_bindings)
             )
         self._nodes.append(
             _AuthoredNode(
                 handle=handle,
-                node_class=node_class,
-                config=config,
                 catalog_node=catalog_node,
+                config=config,
                 bindings=explicit_bindings,
                 input_plugs=[],
+                position=position,
             )
         )
         return handle
@@ -292,12 +355,26 @@ class GraphBuilder:
         if source_node is None or target_node is None:
             raise GraphBuilderError("Cannot connect a node that is not in this graph")
 
-        source_port = source_node.node_class.output_contract.ports.get(source.port)
+        source_port = next(
+            (
+                port
+                for port in source_node.catalog_node.outputs
+                if port.name == source.port
+            ),
+            None,
+        )
         if source_port is None:
             raise GraphBuilderError(
                 f"Node {source.node_id} has no output port {source.port!r}"
             )
-        target_port = target_node.node_class.input_contract.ports.get(target.port)
+        target_port = next(
+            (
+                port
+                for port in target_node.catalog_node.inputs
+                if port.name == target.port
+            ),
+            None,
+        )
         if target_port is None:
             raise GraphBuilderError(
                 f"Node {target.node_id} has no input port {target.port!r}"
@@ -322,16 +399,18 @@ class GraphBuilder:
                 "the input does not accept that shape"
             )
 
-        source_type = source_port.produces
-        if isinstance(source_type, ArtifactTypeVariable):
-            resolved_source = source_node.bindings.get(source_type.name)
-        else:
-            resolved_source = source_type
-        target_type = target_port.accepts
-        if isinstance(target_type, ArtifactTypeVariable):
-            resolved_target = target_node.bindings.get(target_type.name)
-        else:
-            resolved_target = target_type
+        source_variable = source_port.artifact_type_variable
+        resolved_source = (
+            source_node.bindings.get(source_variable)
+            if source_variable is not None
+            else source_port.artifact_type
+        )
+        target_variable = target_port.artifact_type_variable
+        resolved_target = (
+            target_node.bindings.get(target_variable)
+            if target_variable is not None
+            else target_port.artifact_type
+        )
 
         if resolved_source is None and resolved_target is None:
             raise GraphBuilderError(
@@ -362,7 +441,9 @@ class GraphBuilder:
                 inferred_source = catalog_conversion_path[0][1].source
             else:
                 if resolved_target is None:
-                    raise GraphBuilderError("Source artifact type could not be resolved")
+                    raise GraphBuilderError(
+                        "Source artifact type could not be resolved"
+                    )
                 inferred_source = resolved_target
         else:
             inferred_source = resolved_source
@@ -377,7 +458,9 @@ class GraphBuilder:
                     f"not {current_type.id}@{current_type.schema_version}"
                 )
             if conversion.target in visited_types:
-                raise GraphBuilderError("Artifact conversion path must not contain a cycle")
+                raise GraphBuilderError(
+                    "Artifact conversion path must not contain a cycle"
+                )
             current_type = conversion.target
             visited_types.add(current_type)
 
@@ -416,10 +499,10 @@ class GraphBuilder:
             collection_mode=collection_mode,
             conversion_path=tuple(conversion_path),
         )
-        if resolved_source is None and isinstance(source_type, ArtifactTypeVariable):
-            source_node.bindings[source_type.name] = inferred_source
-        if resolved_target is None and isinstance(target_type, ArtifactTypeVariable):
-            target_node.bindings[target_type.name] = inferred_target
+        if resolved_source is None and source_variable is not None:
+            source_node.bindings[source_variable] = inferred_source
+        if resolved_target is None and target_variable is not None:
+            target_node.bindings[target_variable] = inferred_target
         if input_plug is not None:
             target_node.input_plugs.append(input_plug)
         self._edges.append(edge)
@@ -427,16 +510,15 @@ class GraphBuilder:
     def build(self) -> SavedGraphDocument:
         for authored in self._nodes:
             missing_bindings = sorted(
-                _artifact_type_variables(authored.node_class) - set(authored.bindings)
+                _artifact_type_variables(authored.catalog_node) - set(authored.bindings)
             )
             if missing_bindings:
                 raise GraphBuilderError(
-                    f"Node {authored.node_class.operator_id}@"
-                    f"{authored.node_class.operator_version} is missing artifact "
-                    "type binding "
-                    + ", ".join(missing_bindings)
+                    f"Node {authored.catalog_node.operator_id}@"
+                    f"{authored.catalog_node.operator_version} is missing artifact "
+                    "type binding " + ", ".join(missing_bindings)
                 )
-            for port in authored.node_class.input_contract.ports.values():
+            for port in authored.catalog_node.inputs:
                 if not port.required:
                     continue
                 has_connection = any(
@@ -446,8 +528,8 @@ class GraphBuilder:
                 )
                 if not has_connection:
                     raise GraphBuilderError(
-                        f"Node {authored.node_class.operator_id}@"
-                        f"{authored.node_class.operator_version} required input "
+                        f"Node {authored.catalog_node.operator_id}@"
+                        f"{authored.catalog_node.operator_version} required input "
                         f"{port.name!r} has no connection"
                     )
 
@@ -474,12 +556,16 @@ class GraphBuilder:
             SavedGraphNode(
                 kind=_node_kind(authored.catalog_node),
                 id=authored.handle.node_id,
-                operator_id=authored.node_class.operator_id,
-                operator_version=authored.node_class.operator_version,
-                config=authored.config.model_dump(mode="json"),
-                position=GraphPoint(
-                    x=float((index % 4) * 360),
-                    y=float((index // 4) * 240),
+                operator_id=authored.catalog_node.operator_id,
+                operator_version=authored.catalog_node.operator_version,
+                config=authored.config,
+                position=(
+                    authored.position
+                    if authored.position is not None
+                    else GraphPoint(
+                        x=float((index % 4) * 360),
+                        y=float((index // 4) * 240),
+                    )
                 ),
                 input_plugs=tuple(authored.input_plugs),
                 artifact_type_bindings=tuple(

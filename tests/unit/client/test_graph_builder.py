@@ -13,6 +13,7 @@ from grafy_core.artifacts import (
 )
 from grafy_core.domain.plugin_identity import PluginReleaseScope
 from grafy_core.domain.saved_graphs import (
+    GraphPoint,
     SavedGraphConversion,
     SavedGraphPluginReleasePin,
 )
@@ -318,6 +319,55 @@ def test_builder_adds_typed_builtin_node_without_a_plugin_pin() -> None:
     }
 
 
+def test_builder_adds_catalog_node_without_a_local_node_class() -> None:
+    graph = GraphBuilder(_catalog())
+
+    text = graph.add_catalog_node(
+        "text.input",
+        {"text": "catalog authored"},
+        position=GraphPoint(x=480, y=160),
+    )
+
+    document = graph.build()
+
+    assert text.node_id == "node-0001-text-input"
+    assert document.nodes[0].config_dict() == {"text": "catalog authored"}
+    assert document.nodes[0].position == GraphPoint(x=480, y=160)
+
+
+def test_builder_validates_catalog_node_configuration() -> None:
+    graph = GraphBuilder(_catalog())
+
+    with pytest.raises(
+        GraphBuilderError,
+        match="Invalid configuration for text.input@1",
+    ):
+        graph.add_catalog_node("text.input", {"text": 42})
+
+
+def test_builder_pins_catalog_only_plugin_node_release() -> None:
+    graph = GraphBuilder(_catalog())
+    text = graph.add_catalog_node("text.input", {"text": "hello"})
+    markdown = graph.add_catalog_node(
+        "markdown.consume",
+        {},
+        plugin_slug="test.markdown",
+    )
+
+    graph.connect(
+        text.output("text"),
+        markdown.input("markdown"),
+        conversion_path=(SavedGraphConversion(id="text.to_markdown", version=1),),
+    )
+
+    document = graph.build()
+    assert document.nodes[1].plugin_release_pin == SavedGraphPluginReleasePin(
+        scope=PluginReleaseScope.WORKSPACE,
+        slug="test.markdown",
+        revision=7,
+    )
+
+
 def test_builder_connects_ports_and_infers_variadic_artifact_binding() -> None:
     graph = GraphBuilder(_catalog())
     first = graph.add(TextNode, TextConfig(text="first"))
@@ -408,9 +458,7 @@ def test_builder_rejected_connection_does_not_mutate_graph() -> None:
         graph.connect(
             text.output("text"),
             collect.input("items"),
-            conversion_path=(
-                SavedGraphConversion(id="does.not.exist", version=1),
-            ),
+            conversion_path=(SavedGraphConversion(id="does.not.exist", version=1),),
         )
 
     graph.connect(
@@ -425,7 +473,9 @@ def test_builder_rejected_connection_does_not_mutate_graph() -> None:
     assert [edge.id for edge in document.edges] == ["edge-0001"]
 
 
-def test_builder_requires_an_explicit_binding_when_both_variables_are_unresolved() -> None:
+def test_builder_requires_an_explicit_binding_when_both_variables_are_unresolved() -> (
+    None
+):
     graph = GraphBuilder(_catalog())
     source = graph.add(CollectNode, NoConfig())
     target = graph.add(CollectNode, NoConfig())
@@ -434,9 +484,7 @@ def test_builder_requires_an_explicit_binding_when_both_variables_are_unresolved
         graph.connect(
             source.output("items"),
             target.input("items"),
-            conversion_path=(
-                SavedGraphConversion(id="text.to_markdown", version=1),
-            ),
+            conversion_path=(SavedGraphConversion(id="text.to_markdown", version=1),),
         )
 
 

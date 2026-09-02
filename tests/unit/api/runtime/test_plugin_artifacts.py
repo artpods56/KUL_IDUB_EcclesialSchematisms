@@ -197,6 +197,8 @@ def _installed_workspace_release(release: PluginRelease) -> InstalledPluginRelea
             installed_by_platform_actor=None,
         ),
     )
+
+
 OTHER_WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000000402")
 SUMMARY = ArtifactTypeKey("notes.summary", 1)
 TEXT = ArtifactTypeKey("scalar.text", 1)
@@ -312,22 +314,24 @@ def _release(
             if enabled
         )
     )
-    return _installed_workspace_release(PluginRelease(
-        slug="notes",
-        revision=4,
-        catalog=catalog,
-        contract_digest=plugin_contract_digest(catalog),
-        capabilities=capabilities,
-        capability_digest=capabilities.digest,
-        protocol_digest=protocol_digest or plugin_protocol_digest(),
-        profile_digest=plugin_profile_digest("python-uv"),
-        source_object_key="plugin-releases/notes/source.tar.gz",
-        source_digest="a" * 64,
-        lock_digest="b" * 64,
-        runtime_profile="python-uv",
-        loader_target="grafy_plugin:PLUGIN",
-        published_by_user_id=WORKSPACE_ID,
-    ))
+    return _installed_workspace_release(
+        PluginRelease(
+            slug="notes",
+            revision=4,
+            catalog=catalog,
+            contract_digest=plugin_contract_digest(catalog),
+            capabilities=capabilities,
+            capability_digest=capabilities.digest,
+            protocol_digest=protocol_digest or plugin_protocol_digest(),
+            profile_digest=plugin_profile_digest("python-uv"),
+            source_object_key="plugin-releases/notes/source.tar.gz",
+            source_digest="a" * 64,
+            lock_digest="b" * 64,
+            runtime_profile="python-uv",
+            loader_target="grafy_plugin:PLUGIN",
+            published_by_user_id=WORKSPACE_ID,
+        )
+    )
 
 
 def _table_release() -> InstalledPluginRelease:
@@ -350,22 +354,24 @@ def _table_release() -> InstalledPluginRelease:
         ),
     )
     capabilities = PluginCapabilityManifest()
-    return _installed_workspace_release(PluginRelease(
-        slug="tables",
-        revision=1,
-        catalog=catalog,
-        contract_digest=plugin_contract_digest(catalog),
-        capabilities=capabilities,
-        capability_digest=capabilities.digest,
-        protocol_digest=plugin_protocol_digest(),
-        profile_digest=plugin_profile_digest("python-uv"),
-        source_object_key="plugin-releases/tables/source.tar.gz",
-        source_digest="c" * 64,
-        lock_digest="d" * 64,
-        runtime_profile="python-uv",
-        loader_target="grafy_plugin:PLUGIN",
-        published_by_user_id=WORKSPACE_ID,
-    ))
+    return _installed_workspace_release(
+        PluginRelease(
+            slug="tables",
+            revision=1,
+            catalog=catalog,
+            contract_digest=plugin_contract_digest(catalog),
+            capabilities=capabilities,
+            capability_digest=capabilities.digest,
+            protocol_digest=plugin_protocol_digest(),
+            profile_digest=plugin_profile_digest("python-uv"),
+            source_object_key="plugin-releases/tables/source.tar.gz",
+            source_digest="c" * 64,
+            lock_digest="d" * 64,
+            runtime_profile="python-uv",
+            loader_target="grafy_plugin:PLUGIN",
+            published_by_user_id=WORKSPACE_ID,
+        )
+    )
 
 
 def _binary_release() -> InstalledPluginRelease:
@@ -390,22 +396,24 @@ def _binary_release() -> InstalledPluginRelease:
         ),
     )
     capabilities = PluginCapabilityManifest()
-    return _installed_workspace_release(PluginRelease(
-        slug="binary",
-        revision=1,
-        catalog=catalog,
-        contract_digest=plugin_contract_digest(catalog),
-        capabilities=capabilities,
-        capability_digest=capabilities.digest,
-        protocol_digest=plugin_protocol_digest(),
-        profile_digest=plugin_profile_digest("python-uv"),
-        source_object_key="plugin-releases/binary/source.tar.gz",
-        source_digest="e" * 64,
-        lock_digest="f" * 64,
-        runtime_profile="python-uv",
-        loader_target="grafy_plugin:PLUGIN",
-        published_by_user_id=WORKSPACE_ID,
-    ))
+    return _installed_workspace_release(
+        PluginRelease(
+            slug="binary",
+            revision=1,
+            catalog=catalog,
+            contract_digest=plugin_contract_digest(catalog),
+            capabilities=capabilities,
+            capability_digest=capabilities.digest,
+            protocol_digest=plugin_protocol_digest(),
+            profile_digest=plugin_profile_digest("python-uv"),
+            source_object_key="plugin-releases/binary/source.tar.gz",
+            source_digest="e" * 64,
+            lock_digest="f" * 64,
+            runtime_profile="python-uv",
+            loader_target="grafy_plugin:PLUGIN",
+            published_by_user_id=WORKSPACE_ID,
+        )
+    )
 
 
 def _referenced_artifact_release() -> InstalledPluginRelease:
@@ -438,9 +446,7 @@ def _object_set_release(spec: ArtifactTypeSpec) -> InstalledPluginRelease:
     catalog = PluginCatalogManifest(
         slug="portable",
         title="Portable",
-        artifact_type_dependencies=(
-            PluginArtifactTypeContract.from_spec(spec),
-        ),
+        artifact_type_dependencies=(PluginArtifactTypeContract.from_spec(spec),),
         nodes=(
             PluginNodeContract(
                 operator_id="portable.copy",
@@ -456,22 +462,24 @@ def _object_set_release(spec: ArtifactTypeSpec) -> InstalledPluginRelease:
         ),
     )
     capabilities = PluginCapabilityManifest()
-    return _installed_workspace_release(PluginRelease(
-        slug="portable",
-        revision=1,
-        catalog=catalog,
-        contract_digest=plugin_contract_digest(catalog),
-        capabilities=capabilities,
-        capability_digest=capabilities.digest,
-        protocol_digest=plugin_protocol_digest(),
-        profile_digest=plugin_profile_digest("python-uv"),
-        source_object_key="plugin-releases/portable/source.tar.gz",
-        source_digest="6" * 64,
-        lock_digest="7" * 64,
-        runtime_profile="python-uv",
-        loader_target="grafy_plugin:PLUGIN",
-        published_by_user_id=WORKSPACE_ID,
-    ))
+    return _installed_workspace_release(
+        PluginRelease(
+            slug="portable",
+            revision=1,
+            catalog=catalog,
+            contract_digest=plugin_contract_digest(catalog),
+            capabilities=capabilities,
+            capability_digest=capabilities.digest,
+            protocol_digest=plugin_protocol_digest(),
+            profile_digest=plugin_profile_digest("python-uv"),
+            source_object_key="plugin-releases/portable/source.tar.gz",
+            source_digest="6" * 64,
+            lock_digest="7" * 64,
+            runtime_profile="python-uv",
+            loader_target="grafy_plugin:PLUGIN",
+            published_by_user_id=WORKSPACE_ID,
+        )
+    )
 
 
 async def _seed_inline_artifact(
@@ -512,9 +520,7 @@ async def _seed_object_set_artifact(
     metadata: JsonObject,
     references: tuple[PortableMetadataReference, ...],
 ) -> ArtifactRef:
-    root = (
-        f"workspaces/{WORKSPACE_ID}/{spec.key.id}/v{spec.key.schema_version}"
-    )
+    root = f"workspaces/{WORKSPACE_ID}/{spec.key.id}/v{spec.key.schema_version}"
     portable_files: list[PortableArtifactFile] = []
     stored_primary: StoredFile | None = None
     for suffix, (content, file_content_type) in files.items():
@@ -541,12 +547,10 @@ async def _seed_object_set_artifact(
     assert stored_primary is not None
     logical_content = f"logical:{spec.key.id}:{primary_suffix}".encode()
     artifact_metadata = dict(metadata)
-    artifact_metadata[PORTABLE_BUNDLE_METADATA_KEY] = (
-        PortableArtifactBundleMetadata(
-            files=tuple(portable_files),
-            references=references,
-        ).as_metadata_value()
-    )
+    artifact_metadata[PORTABLE_BUNDLE_METADATA_KEY] = PortableArtifactBundleMetadata(
+        files=tuple(portable_files),
+        references=references,
+    ).as_metadata_value()
     artifact = ArtifactObject(
         workspace_id=WORKSPACE_ID,
         artifact_type=spec.key.id,
@@ -624,6 +628,7 @@ class ManifestRunner(PluginGuestRunner):
         self.progress = progress
         self.calls = 0
         self.observed_inputs: tuple[PluginInputBinding, ...] = ()
+        self.observed_limits: PluginInvocationLimits | None = None
 
     async def run(
         self,
@@ -631,8 +636,9 @@ class ManifestRunner(PluginGuestRunner):
         limits: PluginInvocationLimits,
         request: PluginInvocationRequest,
     ) -> None:
-        del limits, request
+        del request
         self.calls += 1
+        self.observed_limits = limits
         protocol_request = PluginInvocationEnvelope.from_json_bytes(
             (invocation_root / "invocation.json").read_bytes()
         )
@@ -721,6 +727,26 @@ class ManifestRunner(PluginGuestRunner):
             progress=self.progress,
         )
         (invocation_root / "result.json").write_bytes(result.canonical_json_bytes())
+
+
+@pytest.mark.asyncio
+async def test_invocation_wall_time_override_is_scoped_to_exact_plugin_slug(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = InMemoryUnitOfWork()
+    input_ref = await _seed_inline_artifact(unit_of_work)
+    runner = ManifestRunner()
+    invoker = ArtifactBundlePluginInvoker(
+        unit_of_work=unit_of_work,
+        runner=runner,
+        scratch_root=tmp_path,
+        wall_time_seconds_by_plugin_slug={"notes": 900},
+    )
+
+    await invoker.invoke(_request(_release(), input_ref))
+
+    assert runner.observed_limits is not None
+    assert runner.observed_limits.wall_time_seconds == 900
 
 
 class ReferencedArtifactGuestRunner(PluginGuestRunner):
@@ -1584,8 +1610,7 @@ async def test_gis_object_sets_round_trip_exact_files_and_typed_metadata_referen
             "tiles/0/0/0.png": (b"exact raster tile", "image/png"),
         }
         tile_prefix = (
-            f"workspaces/{WORKSPACE_ID}/{spec.key.id}/"
-            f"v{spec.key.schema_version}/tiles"
+            f"workspaces/{WORKSPACE_ID}/{spec.key.id}/v{spec.key.schema_version}/tiles"
         )
         metadata = {
             "source_name": "Survey scan",

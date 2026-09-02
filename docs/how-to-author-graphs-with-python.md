@@ -5,14 +5,20 @@ wait for its execution. The client uses the public API only.
 
 ## Prepare access
 
-Create a workspace PAT with these scopes:
+In Workspace Settings, create a PAT with the **Graph automation** purpose. It
+contains these scopes:
 
 - `view_graph`
-- `edit_graph`
-- `create_graph`
-- `manage_secrets`
-- `execute_graph`
+- `view_artifacts`
+- `view_materializations`
+- `view_history`
 - `view_execution`
+- `create_graph`
+- `edit_graph`
+- `checkpoint_graph`
+- `execute_graph`
+- `cancel_execution`
+- `manage_secrets`
 
 Set the API URL and workspace ID. Store the PAT and provider key in protected
 files that are readable only by your user and are excluded from source control:
@@ -170,3 +176,57 @@ uv run python vision_graph.py
 stores the catalog's exact runnable plugin release pin on every saved node. The
 result is a canonical `SavedGraphDocument`, so the web workbench can open and
 edit the saved graph after the script creates it.
+
+## Author installed nodes directly from the catalog
+
+An automation client does not need the installed Plugin's Python package.
+Address a node by its catalog operator ID and pass JSON-compatible
+configuration. `GraphBuilder` validates the configuration against the catalog
+JSON Schema and validates connections against the catalog ports.
+
+```python
+from grafy_client import GraphBuilder
+from grafy_core.domain.saved_graphs import GraphPoint
+
+
+catalog = await grafy.catalog.get(workspace_id)
+graph = GraphBuilder(catalog)
+extract = graph.add_catalog_node(
+    "notarius.dataset.extract_structured",
+    {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4.1-mini",
+        "context_strategy": "sliding_window",
+        "window_size": 5,
+        "max_concurrent": 5,
+        "lookahead_images": True,
+        "temperature": 0,
+        "max_completion_tokens": 8192,
+        "timeout_ms": 120000,
+        "max_retries": 0,
+        "schema_name": "chwalewik_entry",
+        "strict": True,
+    },
+    position=GraphPoint(x=720, y=120),
+)
+```
+
+Omit `operator_version` only when the workspace catalog contains exactly one
+matching operator. Pass `operator_version` and `plugin_slug` to disambiguate
+multiple catalog entries.
+
+## Revise a graph created by automation
+
+Read the current revision before replacing a graph. The server rejects stale
+updates and graphs with uncheckpointed collaborative changes.
+
+```python
+current = await grafy.graphs.get(workspace_id, graph_id)
+updated = await grafy.graphs.update(
+    workspace_id,
+    graph_id,
+    name=current.name,
+    document=graph.build(),
+    expected_revision=current.revision,
+)
+```

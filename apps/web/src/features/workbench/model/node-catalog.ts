@@ -29,6 +29,8 @@ export type CatalogFilterKind =
   | "single"
   | "sequence"
   | "any-artifact"
+  | "source"
+  | "input-nodes"
   | "workspace-library";
 
 export type CatalogFilterId =
@@ -36,14 +38,18 @@ export type CatalogFilterId =
   | "single"
   | "sequence"
   | "any-artifact"
+  | "input-nodes"
   | "workspace-library"
-  | `artifact:${string}@${number}`;
+  | `artifact:${string}@${number}`
+  | `source:${string}`;
 
 export interface CatalogFilter {
   id: CatalogFilterId;
   kind: CatalogFilterKind;
   title: string;
   artifactKey?: ArtifactTypeKey;
+  /** Provider plugin slug, set for `source` filters. */
+  sourceKey?: string;
 }
 
 export interface ContextualRouteChoice {
@@ -76,6 +82,17 @@ export function artifactTypeKeyId(key: ArtifactTypeKey): string {
 export function artifactFilterId(key: ArtifactTypeKey): CatalogFilterId {
   return `artifact:${key.id}@${key.schema_version}`;
 }
+
+export function sourceFilterId(slug: string): CatalogFilterId {
+  return `source:${slug}`;
+}
+
+/** Restricts results to nodes that take no inputs because they are inputs themselves. */
+export const INPUT_NODES_FILTER: CatalogFilter = {
+  id: "input-nodes",
+  kind: "input-nodes",
+  title: "Input nodes",
+};
 
 function pluginFor(
   registry: NodeRegistry,
@@ -133,6 +150,43 @@ function artifactTitle(
         artifact.key.schema_version === key.schema_version,
     )?.title ?? key.id
   );
+}
+
+/** Build the source categories: every provider plugin that ships nodes, plus the workspace library. */
+export function buildSourceFilters(
+  registry: NodeRegistry,
+): readonly CatalogFilter[] {
+  const slugsWithNodes = new Set(
+    registry.nodes.map((spec) => spec.plugin_slug),
+  );
+  const sources = registry.plugins
+    .filter(
+      (plugin) =>
+        plugin.origin !== "module" && slugsWithNodes.has(plugin.slug),
+    )
+    .slice()
+    .sort(
+      (left, right) =>
+        left.title.localeCompare(right.title) ||
+        left.slug.localeCompare(right.slug),
+    );
+
+  return [
+    { id: "all", kind: "all", title: "All" },
+    ...sources.map(
+      (plugin): CatalogFilter => ({
+        id: sourceFilterId(plugin.slug),
+        kind: "source",
+        title: plugin.title || "System",
+        sourceKey: plugin.slug,
+      }),
+    ),
+    {
+      id: "workspace-library",
+      kind: "workspace-library",
+      title: "Workspace library",
+    },
+  ];
 }
 
 /** Build browse filters from registered artifact types plus fixed shape/library filters. */
@@ -199,6 +253,12 @@ export function catalogNodesForFilter(
       return nodes.filter((spec) => nodeMatchesShapeFilter(spec, "many"));
     case "any-artifact":
       return nodes.filter(nodeMatchesAnyArtifact);
+    case "source":
+      return filter.sourceKey
+        ? nodes.filter((spec) => spec.plugin_slug === filter.sourceKey)
+        : [];
+    case "input-nodes":
+      return nodes.filter((spec) => spec.inputs.length === 0);
     case "workspace-library":
       return nodes.filter(isWorkspaceLibraryNode);
   }
@@ -211,29 +271,6 @@ export function sortCatalogNodes(nodes: readonly NodeSpec[]): NodeSpec[] {
     const byOperator = left.operator_id.localeCompare(right.operator_id);
     if (byOperator !== 0) return byOperator;
     return left.operator_version - right.operator_version;
-  });
-}
-
-const CATALOG_ORIGIN_ORDER = ["builtin", "plugin", "module"] as const;
-
-const CATALOG_ORIGIN_TITLES: Record<(typeof CATALOG_ORIGIN_ORDER)[number], string> = {
-  builtin: "Built-in",
-  plugin: "Plugins",
-  module: "Modules",
-};
-
-export function catalogOriginGroups(
-  nodes: readonly NodeSpec[],
-): readonly {
-  readonly origin: (typeof CATALOG_ORIGIN_ORDER)[number];
-  readonly title: string;
-  readonly nodes: readonly NodeSpec[];
-}[] {
-  return CATALOG_ORIGIN_ORDER.flatMap((origin) => {
-    const group = nodes.filter((spec) => spec.origin === origin);
-    return group.length
-      ? [{ origin, title: CATALOG_ORIGIN_TITLES[origin], nodes: group }]
-      : [];
   });
 }
 
@@ -295,13 +332,16 @@ export function searchCatalogNodes(
 
 export function filterAndSearchCatalogNodes(
   nodes: readonly NodeSpec[],
-  filter: CatalogFilter,
+  filters: readonly CatalogFilter[],
   query: string,
   registry: NodeRegistry,
 ): readonly NodeSpec[] {
-  return sortCatalogNodes(
-    searchCatalogNodes(catalogNodesForFilter(nodes, filter), query, registry),
+  const filtered = filters.reduce(
+    (acc, filter) =>
+      filter.kind === "all" ? acc : catalogNodesForFilter(acc, filter),
+    nodes,
   );
+  return sortCatalogNodes(searchCatalogNodes(filtered, query, registry));
 }
 
 export function catalogNodeSpecs(

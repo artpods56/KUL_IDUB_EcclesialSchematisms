@@ -8,7 +8,13 @@ from pydantic import SecretStr
 from grafy_core.domain.saved_graphs import SavedGraphDocument
 
 from .execution import ExecutionHandle
-from .models import ExecutionState, NodeCatalog, NodeSecretStatus, SavedGraph, UploadItem
+from .models import (
+    ExecutionState,
+    NodeCatalog,
+    NodeSecretStatus,
+    SavedGraph,
+    UploadItem,
+)
 from .transport import HttpTransport
 
 
@@ -43,6 +49,35 @@ class GraphClient:
             json_payload={
                 "name": name,
                 "document": document.model_dump(mode="json"),
+            },
+        )
+        return SavedGraph.model_validate(payload)
+
+    async def get(self, workspace_id: UUID, graph_id: UUID) -> SavedGraph:
+        payload = await self._transport.request_json(
+            operation="get saved graph",
+            method="GET",
+            path=f"/v1/workspaces/{workspace_id}/graphs/{graph_id}",
+        )
+        return SavedGraph.model_validate(payload)
+
+    async def update(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+        *,
+        name: str,
+        document: SavedGraphDocument,
+        expected_revision: int,
+    ) -> SavedGraph:
+        payload = await self._transport.request_json(
+            operation="update saved graph",
+            method="PUT",
+            path=f"/v1/workspaces/{workspace_id}/graphs/{graph_id}",
+            json_payload={
+                "name": name,
+                "document": document.model_dump(mode="json"),
+                "expected_revision": expected_revision,
             },
         )
         return SavedGraph.model_validate(payload)
@@ -91,9 +126,7 @@ class GraphClient:
         payload = await self._transport.request_json(
             operation="start saved graph execution",
             method="POST",
-            path=(
-                f"/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions"
-            ),
+            path=(f"/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions"),
             json_payload={"expected_revision": expected_revision},
             headers=headers,
         )

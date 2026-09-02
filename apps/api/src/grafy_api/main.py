@@ -14,9 +14,6 @@ from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.application.templates import TemplateService
 from grafy_core.application.identity import IdentityService
-from grafy_core.operators.modules import MODULE_BOUNDARY_REGISTRATIONS
-from grafy_core.plugins import PluginRegistry
-
 from grafy_workbench import BuiltinNodeCatalog
 
 from grafy_persistence.database import create_database
@@ -161,6 +158,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 max_pending_graphs=resolved_settings.max_pending_graphs,
                 max_active_plugin_invocations=(
                     resolved_settings.max_active_plugin_invocations
+                ),
+                plugin_invocation_wall_time_seconds_by_slug=(
+                    resolved_settings.plugin_invocation_wall_time_seconds_by_slug
                 ),
                 storage_backend=resolved_settings.storage_backend,
                 bucket=resolved_settings.storage_bucket,

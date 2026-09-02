@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar, Literal
+import re
 import secrets
 import warnings
 from urllib.parse import urlsplit
@@ -90,6 +91,9 @@ class Settings(BaseSettings):
     max_active_executions: int = Field(default=2, ge=1, le=32)
     max_pending_graphs: int = Field(default=20, ge=1, le=1_000)
     max_active_plugin_invocations: int = Field(default=4, ge=1, le=128)
+    plugin_invocation_wall_time_seconds_by_slug: dict[str, int] = Field(
+        default_factory=dict,
+    )
     max_live_plugin_sandboxes: int = Field(default=4, ge=1, le=64)
     max_distinct_plugin_releases_per_graph: int = Field(default=4, ge=1, le=64)
     # Origin-keyed sandboxes turn one release into multiple variants. This
@@ -190,6 +194,22 @@ class Settings(BaseSettings):
                 "max_live_plugin_sandboxes"
             )
         return self
+
+    @field_validator("plugin_invocation_wall_time_seconds_by_slug")
+    @classmethod
+    def validate_plugin_invocation_wall_times(
+        cls,
+        value: dict[str, int],
+    ) -> dict[str, int]:
+        for slug, seconds in value.items():
+            if re.fullmatch(r"[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*", slug) is None:
+                raise ValueError(f"Invalid Plugin slug {slug!r}")
+            if seconds < 1 or seconds > 3_600:
+                raise ValueError(
+                    f"Plugin invocation wall time for {slug!r} must be between "
+                    "1 and 3600 seconds"
+                )
+        return value
 
     @model_validator(mode="after")
     def validate_plugin_egress(self) -> "Settings":

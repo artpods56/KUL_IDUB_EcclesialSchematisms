@@ -1,1 +1,1 @@
-export { GraphBrowser as default } from "@/features/graphs/GraphBrowser";
+export { WorkspaceGraphRedirect as default } from "@/features/graphs/WorkspaceGraphRedirect";

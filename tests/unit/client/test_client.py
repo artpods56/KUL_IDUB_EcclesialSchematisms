@@ -151,6 +151,56 @@ async def test_graph_create_sends_canonical_document_and_returns_saved_graph() -
 
 
 @pytest.mark.asyncio
+async def test_graph_get_and_update_use_typed_saved_graph_contract() -> None:
+    graph_id = UUID("22222222-2222-4222-8222-222222222222")
+    document = SavedGraphDocument()
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            revision = 1
+            name = "Existing graph"
+        else:
+            assert request.method == "PUT"
+            assert json.loads(request.content) == {
+                "name": "Updated graph",
+                "document": document.model_dump(mode="json"),
+                "expected_revision": 1,
+            }
+            revision = 2
+            name = "Updated graph"
+        assert request.url.path == (f"/v1/workspaces/{WORKSPACE_ID}/graphs/{graph_id}")
+        return httpx.Response(
+            200,
+            json={
+                "id": str(graph_id),
+                "name": name,
+                "revision": revision,
+                "created_at": "2026-09-01T10:00:00Z",
+                "updated_at": "2026-09-01T10:00:00Z",
+                "document": document.model_dump(mode="json"),
+            },
+        )
+
+    async with GrafyClient(
+        base_url="https://grafy.test",
+        token=SecretStr("nrt_live_secret"),
+        transport=httpx.MockTransport(respond),
+    ) as client:
+        existing = await client.graphs.get(WORKSPACE_ID, graph_id)
+        updated = await client.graphs.update(
+            WORKSPACE_ID,
+            graph_id,
+            name="Updated graph",
+            document=document,
+            expected_revision=existing.revision,
+        )
+
+    assert existing.name == "Existing graph"
+    assert updated.name == "Updated graph"
+    assert updated.revision == 2
+
+
+@pytest.mark.asyncio
 async def test_upload_create_sends_multipart_bytes_and_returns_upload_item() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
@@ -192,8 +242,7 @@ async def test_secret_configuration_error_keeps_context_and_redacts_secrets() ->
     def respond(request: httpx.Request) -> httpx.Response:
         assert request.method == "PUT"
         assert request.url.path == (
-            f"/v1/workspaces/{WORKSPACE_ID}/graphs/{graph_id}/nodes/llm/"
-            "secrets/api_key"
+            f"/v1/workspaces/{WORKSPACE_ID}/graphs/{graph_id}/nodes/llm/secrets/api_key"
         )
         assert json.loads(request.content) == {
             "value": "sk-test-sensitive",

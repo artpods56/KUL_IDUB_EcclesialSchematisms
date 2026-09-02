@@ -141,6 +141,41 @@ def _policy(
     )
 
 
+def test_development_manifest_allows_notarius_configured_public_egress() -> None:
+    policy = load_network_policy_manifest(
+        Path(__file__).resolve().parents[3] / "network-policy.toml"
+    )
+    contract = _contract(("base_url",))
+    config = {"base_url": "https://api.openai.com/v1"}
+
+    resolution = resolve_http_egress_authority(
+        policy,
+        scope=PluginReleaseScope.WORKSPACE,
+        workspace_id=UUID("5ff0b54e-a3fd-4904-8d58-ee157e419b3a"),
+        slug="external.notarius",
+        revision=1,
+        contract=contract,
+        config=config,
+    )
+    unrelated_workspace = resolve_http_egress_authority(
+        policy,
+        scope=PluginReleaseScope.WORKSPACE,
+        workspace_id=WORKSPACE_ID,
+        slug="external.notarius",
+        revision=1,
+        contract=contract,
+        config=config,
+    )
+
+    assert resolution.allowed, resolution.detail
+    assert resolution.profile is not None
+    assert resolution.profile.mode is NetworkProfileMode.CONFIGURED_PUBLIC
+    assert resolution.origins == (
+        PluginEgressDestination.parse("https://api.openai.com:443"),
+    )
+    assert unrelated_workspace.reason is NetworkRejectionReason.PROFILE_DISABLED
+
+
 def test_manifest_parses_profiles_assignments_and_defaults(tmp_path: Path) -> None:
     path = _write_manifest(
         tmp_path,

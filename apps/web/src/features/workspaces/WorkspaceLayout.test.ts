@@ -24,6 +24,14 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const testState = vi.hoisted(() => ({
   pathname: "/workspaces/operations/graphs/graph-a",
   push: vi.fn(),
+  savedGraphs: [] as Array<{
+    id: string;
+    name: string;
+    revision: number;
+    node_count: number;
+    edge_count: number;
+    updated_at: string;
+  }>,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -74,7 +82,7 @@ vi.mock("@/features/workbench/ui/WorkbenchChromeContext", () => ({
 
 vi.mock("@/hooks/use-api", () => ({
   useSavedGraphs: () => ({
-    data: { graphs: [] },
+    data: { graphs: testState.savedGraphs },
     mutate: vi.fn(),
   }),
   useWorkspaces: () => ({ data: [] }),
@@ -91,6 +99,7 @@ afterEach(async () => {
   document.body.replaceChildren();
   testState.pathname = "/workspaces/operations/graphs/graph-a";
   testState.push.mockReset();
+  testState.savedGraphs = [];
   vi.unstubAllGlobals();
 });
 
@@ -119,7 +128,9 @@ const testSession: Session = {
   revoked_at: null,
 };
 
-async function renderWorkspaceRail(): Promise<{
+async function renderWorkspaceRail(
+  workspaces: readonly Workspace[] = [workspace([])],
+): Promise<{
   container: HTMLDivElement;
   rerender: () => Promise<void>;
 }> {
@@ -143,7 +154,7 @@ async function renderWorkspaceRail(): Promise<{
     await act(async () => {
       root.render(
         React.createElement(WorkspaceRail, {
-          workspaces: [workspace([])],
+          workspaces,
           activeSlug: "operations",
           session: testSession,
           onLogout: vi.fn(),
@@ -234,6 +245,9 @@ describe("workspace route and capability state", () => {
       "Teams & access",
     );
     expect(
+      workspaceMobileContextLabel("/workspaces/operations/settings", personal),
+    ).toBe("Settings");
+    expect(
       workspaceMobileContextLabel(
         "/workspaces/operations/graphs/graph-1",
         workspace([], { name: "Operations" }),
@@ -289,6 +303,71 @@ describe("workspace route and capability state", () => {
 });
 
 describe("workspace rail route lifecycle", () => {
+  it("opens the graph list in the selected workspace", async () => {
+    testState.pathname = "/workspaces/operations/graphs";
+    const { container } = await renderWorkspaceRail();
+    const allGraphs = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "All graphs",
+    );
+
+    expect(allGraphs?.classList.contains("is-active")).toBe(true);
+    await act(async () => allGraphs?.click());
+
+    expect(testState.push).toHaveBeenCalledWith(
+      "/workspaces/operations/graphs",
+    );
+  });
+
+  it("switches workspace while preserving the current section", async () => {
+    const atlas = workspace([], {
+      id: "workspace-2",
+      name: "Atlas",
+      slug: "atlas",
+    });
+    testState.pathname = "/workspaces/operations/settings";
+    const { container, rerender } = await renderWorkspaceRail([
+      workspace([]),
+      atlas,
+    ]);
+    const selector = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Switch workspace"]',
+    )!;
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype,
+        "value",
+      )?.set?.call(selector, "atlas");
+      selector.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(testState.push).toHaveBeenCalledWith("/workspaces/atlas/settings");
+
+    testState.push.mockReset();
+    testState.pathname = "/workspaces/operations/graphs/graph-a";
+    await rerender();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype,
+        "value",
+      )?.set?.call(selector, "atlas");
+      selector.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(testState.push).toHaveBeenCalledWith("/workspaces/atlas/graphs");
+  });
+
+  it("opens settings for the active workspace", async () => {
+    const { container } = await renderWorkspaceRail();
+    const settings = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Settings",
+    );
+
+    await act(async () => settings?.click());
+
+    expect(testState.push).toHaveBeenCalledWith(
+      "/workspaces/operations/settings",
+    );
+  });
+
   it("does not reopen a mobile drawer after navigating away and back", async () => {
     const { container, rerender } = await renderWorkspaceRail();
     const openNavigation = container.querySelector<HTMLButtonElement>(
@@ -313,30 +392,25 @@ describe("workspace rail route lifecycle", () => {
     ).toBeNull();
   });
 
-  it("does not reopen quick switch after navigating away and back", async () => {
-    const { container, rerender } = await renderWorkspaceRail();
-    const openNavigation = container.querySelector<HTMLButtonElement>(
-      "[aria-label='Open navigation']",
+  it("keeps recent graphs without redundant sidebar controls or icons", async () => {
+    testState.savedGraphs = [
+      {
+        id: "graph-a",
+        name: "Monthly extraction",
+        revision: 1,
+        node_count: 2,
+        edge_count: 1,
+        updated_at: "2026-09-01T12:00:00Z",
+      },
+    ];
+    const { container } = await renderWorkspaceRail();
+    const recentGraph = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Monthly extraction"]',
     );
-    await act(async () => openNavigation?.click());
-    const quickSwitch = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent?.includes("Quick switch"),
-    );
-    await act(async () => quickSwitch?.click());
-    expect(
-      document.querySelector("[aria-label='Quick graph switcher']"),
-    ).not.toBeNull();
 
-    testState.pathname = "/workspaces/operations/graphs/graph-b";
-    await rerender();
-    expect(
-      document.querySelector("[aria-label='Quick graph switcher']"),
-    ).toBeNull();
-
-    testState.pathname = "/workspaces/operations/graphs/graph-a";
-    await rerender();
-    expect(
-      document.querySelector("[aria-label='Quick graph switcher']"),
-    ).toBeNull();
+    expect(container.textContent).not.toContain("Quick switch");
+    expect(container.querySelector('[aria-label="Graph location"]')).toBeNull();
+    expect(recentGraph).not.toBeNull();
+    expect(recentGraph?.querySelector("svg")).toBeNull();
   });
 });

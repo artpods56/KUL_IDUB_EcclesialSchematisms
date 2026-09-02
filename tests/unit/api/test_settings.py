@@ -135,6 +135,7 @@ def test_execution_defaults_with_bounded_map_concurrency(
     assert settings.max_active_executions == 2
     assert settings.max_pending_graphs == 20
     assert settings.max_active_plugin_invocations == 4
+    assert settings.plugin_invocation_wall_time_seconds_by_slug == {}
     assert settings.max_live_plugin_sandboxes == 4
     assert settings.max_distinct_plugin_releases_per_graph == 4
 
@@ -193,6 +194,31 @@ def test_plugin_capacity_dimensions_can_be_selected_from_the_environment(
     assert settings.max_distinct_plugin_releases_per_graph == 7
 
 
+def test_plugin_invocation_wall_times_can_be_selected_by_exact_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "GRAFY_PLUGIN_INVOCATION_WALL_TIME_SECONDS_BY_SLUG",
+        '{"external.notarius":900}',
+    )
+
+    assert Settings().plugin_invocation_wall_time_seconds_by_slug == {
+        "external.notarius": 900,
+    }
+
+
+@pytest.mark.parametrize(
+    ("slug", "seconds"),
+    [("Invalid slug", 60), ("external.notarius", 0), ("external.notarius", 3_601)],
+)
+def test_plugin_invocation_wall_time_overrides_are_bounded(
+    slug: str,
+    seconds: int,
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(plugin_invocation_wall_time_seconds_by_slug={slug: seconds})
+
+
 def test_distinct_plugin_release_limit_cannot_exceed_live_sandboxes() -> None:
     with pytest.raises(ValidationError):
         Settings(
@@ -204,9 +230,7 @@ def test_distinct_plugin_release_limit_cannot_exceed_live_sandboxes() -> None:
 def test_plugin_egress_requires_a_pinned_broker_and_exact_destinations() -> None:
     settings = Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue]
-        plugin_egress_broker_image=(
-            "registry.example/grafy-egress@sha256:" + "a" * 64
-        ),
+        plugin_egress_broker_image=("registry.example/grafy-egress@sha256:" + "a" * 64),
         plugin_http_egress_destinations=("https://api.example.com:443",),
         plugin_postgresql_egress_destinations=(
             "postgresql://database.example.com:5432",
@@ -423,6 +447,4 @@ allowed_origins = ["https://pypi.org:443"]
 
     egress = settings.resolved_plugin_egress_policy
     assert egress.available is True
-    assert {origin.host for origin in egress.destinations} == {
-        "database.example.com"
-    }
+    assert {origin.host for origin in egress.destinations} == {"database.example.com"}

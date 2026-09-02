@@ -1,5 +1,8 @@
 import { request } from "./client";
 import type {
+  PersonalAccessToken,
+  PersonalAccessTokenCreated,
+  PersonalAccessTokenCreateRequest,
   Workspace,
   WorkspaceCreateRequest,
   WorkspaceInvitation,
@@ -108,5 +111,37 @@ export function removeWorkspaceMember(workspaceId: string, userId: string) {
   return request<undefined>(
     "DELETE",
     `/v1/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(userId)}`,
+  );
+}
+
+export function listPersonalAccessTokens(
+  workspaceId: string,
+  signal?: AbortSignal,
+) {
+  return request<readonly PersonalAccessToken[]>(
+    "GET",
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/personal-access-tokens`,
+    { signal },
+  );
+}
+
+export function createPersonalAccessToken(
+  workspaceId: string,
+  body: PersonalAccessTokenCreateRequest,
+) {
+  return request<PersonalAccessTokenCreated>(
+    "POST",
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/personal-access-tokens`,
+    { body },
+  );
+}
+
+export function revokePersonalAccessToken(
+  workspaceId: string,
+  tokenId: string,
+) {
+  return request<undefined>(
+    "DELETE",
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/personal-access-tokens/${encodeURIComponent(tokenId)}`,
   );
 }

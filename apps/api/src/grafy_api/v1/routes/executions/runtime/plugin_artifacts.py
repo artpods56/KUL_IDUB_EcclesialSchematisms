@@ -370,14 +370,12 @@ def _input_groups(
             not isinstance(group, ArtifactRef | ArtifactRefSequence) for group in groups
         ):
             raise PluginInvocationError(
-                f"Plugin input {port.name!r} contains a non-reference "
-                "input group"
+                f"Plugin input {port.name!r} contains a non-reference input group"
             )
         return cast(list[ArtifactRef | ArtifactRefSequence], groups)
     if not isinstance(value, ArtifactRef | ArtifactRefSequence):
         raise PluginInvocationError(
-            f"Plugin input {port.name!r} is not an artifact reference "
-            "container"
+            f"Plugin input {port.name!r} is not an artifact reference container"
         )
     return [value]
 
@@ -500,6 +498,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
         bucket: str = "artifacts",
         storage_backend: str = "local",
         max_concurrent_invocations: int = 4,
+        wall_time_seconds_by_plugin_slug: Mapping[str, int] | None = None,
         node_secrets: NodeSecretResolverPort | None = None,
         uploads_dir: Path | None = None,
     ) -> None:
@@ -512,6 +511,15 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
         self._unit_of_work = unit_of_work
         self._runner = runner
         self._limits = limits or PluginInvocationLimits()
+        self._limits_by_plugin_slug = {
+            slug: PluginInvocationLimits.model_validate(
+                {
+                    **self._limits.model_dump(),
+                    "wall_time_seconds": seconds,
+                }
+            )
+            for slug, seconds in (wall_time_seconds_by_plugin_slug or {}).items()
+        }
         self._scratch_root = scratch_root
         self._scratch = scratch
         self._storage = storage
@@ -592,12 +600,20 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
             (invocation_root / "inputs").mkdir(mode=0o700)
             (invocation_root / "outputs").mkdir(mode=0o700)
             (invocation_root / "secrets").mkdir(mode=0o700)
-            envelope = await self._stage_inputs(request, invocation_root)
+            invocation_limits = self._limits_by_plugin_slug.get(
+                request.release.slug,
+                self._limits,
+            )
+            envelope = await self._stage_inputs(
+                request,
+                invocation_root,
+                invocation_limits,
+            )
             (invocation_root / "invocation.json").write_bytes(
                 envelope.canonical_json_bytes()
             )
             try:
-                await self._runner.run(invocation_root, self._limits, request)
+                await self._runner.run(invocation_root, invocation_limits, request)
             except PluginGuestRunError as exc:
                 raise PluginInvocationError(
                     f"Plugin {request.release.slug!r} revision "
@@ -833,8 +849,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
         digest = sha256(content).hexdigest()
         if len(content) != artifact.byte_size or digest != artifact.sha256:
             raise PluginInvocationError(
-                f"Plugin binary artifact {artifact.id} failed stored "
-                "content validation"
+                f"Plugin binary artifact {artifact.id} failed stored content validation"
             )
         path.write_bytes(content)
         path.chmod(0o400)
@@ -912,8 +927,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
             raise
         except Exception as exc:
             raise PluginInvocationError(
-                f"Plugin object-set artifact {artifact.id} could not be "
-                "staged"
+                f"Plugin object-set artifact {artifact.id} could not be staged"
             ) from exc
 
     async def _stage_input_artifact_bundle(
@@ -968,9 +982,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
     ) -> tuple[StoredFile, bool]:
         storage = self._storage
         if storage is None:
-            raise PluginInvocationError(
-                "Plugin Table output requires artifact storage"
-            )
+            raise PluginInvocationError("Plugin Table output requires artifact storage")
         try:
             stored = await storage.save(command)
         except ObjectAlreadyExistsError:
@@ -1007,8 +1019,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
                     "content-addressed object and cleanup failed"
                 ) from cleanup_exc
             raise PluginInvocationError(
-                "Plugin Table output storage changed a new "
-                "content-addressed object"
+                "Plugin Table output storage changed a new content-addressed object"
             )
         return stored, True
 
@@ -1082,9 +1093,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
         if not request.contract.staged_upload_inputs:
             return (), 0, 0
         if self._uploads_dir is None:
-            raise PluginInvocationError(
-                "Plugin staged-upload adapter is unavailable"
-            )
+            raise PluginInvocationError("Plugin staged-upload adapter is unavailable")
         requested: list[tuple[str, str, str, int]] = []
         for declaration in request.contract.staged_upload_inputs:
             raw_items = request.config.get(declaration.config_field)
@@ -1121,9 +1130,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
             )
         keys = [upload_key for _, upload_key, _, _ in requested]
         if len(keys) != len(set(keys)):
-            raise PluginInvocationError(
-                "Plugin staged-upload keys must be unique"
-            )
+            raise PluginInvocationError("Plugin staged-upload keys must be unique")
         records = {}
         plugin_uow = cast(PluginUnitOfWorkPort, self._unit_of_work)
         async with plugin_uow as entered:
@@ -1160,8 +1167,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
             )
             if source.is_symlink() or not source.is_file():
                 raise PluginInvocationError(
-                    f"Plugin staged upload {upload_key!r} is not a "
-                    "regular file"
+                    f"Plugin staged upload {upload_key!r} is not a regular file"
                 )
             relative_path = f"uploads/{request.workspace_id}/{upload_key}"
             destination = _bundle_path(invocation_root, relative_path)
@@ -1263,6 +1269,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
         self,
         request: PluginInvocationRequest,
         invocation_root: Path,
+        invocation_limits: PluginInvocationLimits,
     ) -> PluginInvocationEnvelope:
         ports_by_name = {port.name: port for port in request.contract.inputs}
         unknown_inputs = sorted(set(request.inputs) - set(ports_by_name))
@@ -1472,9 +1479,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
             staged_upload_files,
         ) = await self._stage_uploads(request, invocation_root)
         if total_bytes + staged_upload_bytes > self._limits.max_input_bytes:
-            raise PluginInvocationError(
-                "Plugin aggregate input byte limit exceeded"
-            )
+            raise PluginInvocationError("Plugin aggregate input byte limit exceeded")
         if total_files + staged_upload_files > self._limits.max_files:
             raise PluginInvocationError(
                 "Plugin aggregate input file-count limit exceeded"
@@ -1516,7 +1521,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
             outputs=tuple(declarations),
             secrets=secret_bindings,
             staged_uploads=staged_uploads,
-            limits=self._limits,
+            limits=invocation_limits,
         )
 
     def _read_result(
@@ -1580,8 +1585,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
         extra_ports = sorted(set(bindings) - set(declarations))
         if extra_ports:
             raise PluginInvocationError(
-                f"Plugin returned undeclared outputs: "
-                f"{', '.join(extra_ports)}"
+                f"Plugin returned undeclared outputs: {', '.join(extra_ports)}"
             )
         missing_ports = sorted(
             declaration.port
@@ -1609,8 +1613,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
                 actual_paths.add(path.relative_to(invocation_root).as_posix())
         if actual_paths != declared_paths:
             raise PluginInvocationError(
-                "Plugin output directory must contain exactly the "
-                "declared bundle files"
+                "Plugin output directory must contain exactly the declared bundle files"
             )
 
         validated: dict[str, list[_ValidatedOutputArtifact]] = {}
@@ -1800,8 +1803,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
                     elif isinstance(bundle, _ValidatedBinaryOutputArtifact):
                         if self._storage is None:
                             raise PluginInvocationError(
-                                "Plugin binary output requires artifact "
-                                "storage"
+                                "Plugin binary output requires artifact storage"
                             )
                         object_key = (
                             f"workspaces/{request.workspace_id}/{key.id}/"
@@ -1850,8 +1852,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
                     elif isinstance(bundle, _ValidatedObjectSetOutputArtifact):
                         if self._storage is None:
                             raise PluginInvocationError(
-                                "Plugin object-set output requires artifact "
-                                "storage"
+                                "Plugin object-set output requires artifact storage"
                             )
                         manifest_digest = sha256(
                             bundle.manifest.model_dump_json().encode("utf-8")
@@ -1925,8 +1926,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
                     else:
                         if self._storage is None:
                             raise PluginInvocationError(
-                                "Plugin Table output requires artifact "
-                                "storage"
+                                "Plugin Table output requires artifact storage"
                             )
                         stored_byte_size = 0
                         chunk_descriptors: list[TableChunkDescriptor] = []

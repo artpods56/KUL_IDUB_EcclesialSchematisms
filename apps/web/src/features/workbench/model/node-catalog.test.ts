@@ -6,16 +6,18 @@ import { portMetaForPort } from "../canvas/types";
 import {
   artifactFilterId,
   buildCatalogFilters,
+  buildSourceFilters,
   catalogNodeKey,
   catalogNodePortSummary,
   catalogNodeSpecs,
   catalogNodesForFilter,
-  catalogOriginGroups,
   downstreamCandidatesFromOutput,
   filterAndSearchCatalogNodes,
+  INPUT_NODES_FILTER,
   moduleCallUpgradeTarget,
   pluginReleaseUpgradeTarget,
   sortCatalogNodes,
+  sourceFilterId,
   upstreamCandidatesFromInput,
 } from "./node-catalog";
 
@@ -234,17 +236,6 @@ function registry(): NodeRegistry {
   };
 }
 
-describe("node catalog origin groups", () => {
-  it("orders Built-in, Plugins, then Modules", () => {
-    const groups = catalogOriginGroups(registry().nodes);
-    expect(groups.map((group) => group.title)).toEqual([
-      "Built-in",
-      "Plugins",
-      "Modules",
-    ]);
-  });
-});
-
 describe("node catalog modules", () => {
   it("offers only visible revisions and excludes the graph being edited", () => {
     const available = catalogNodeSpecs(registry(), FIRST_GRAPH_ID);
@@ -427,7 +418,7 @@ describe("artifact catalog filters", () => {
     ]);
 
     expect(
-      filterAndSearchCatalogNodes(nodes, filter, "replace", registry()).map(
+      filterAndSearchCatalogNodes(nodes, [filter], "replace", registry()).map(
         (spec) => spec.operator_id,
       ),
     ).toEqual(["text.replace"]);
@@ -435,13 +426,76 @@ describe("artifact catalog filters", () => {
     expect(
       filterAndSearchCatalogNodes(
         nodes,
-        buildCatalogFilters(registry()).find(
-          (candidate) => candidate.id === "workspace-library",
-        )!,
+        [
+          buildCatalogFilters(registry()).find(
+            (candidate) => candidate.id === "workspace-library",
+          )!,
+        ],
         "normalize",
         registry(),
       ).map((spec) => spec.operator_id),
     ).toEqual([`module.graph.${FIRST_GRAPH_ID}`]);
+  });
+
+  it("builds one source category per provider plugin plus the workspace library", () => {
+    const sources = buildSourceFilters(registry());
+
+    expect(sources.map((filter) => [filter.id, filter.title])).toEqual([
+      ["all", "All"],
+      [sourceFilterId("builtin"), "Built-in"],
+      [sourceFilterId("external"), "External"],
+      ["workspace-library", "Workspace library"],
+    ]);
+  });
+
+  it("matches source and input-node filters", () => {
+    const nodes = catalogNodeSpecs(registry(), null);
+    const sources = buildSourceFilters(registry());
+    const byId = Object.fromEntries(
+      sources.map((filter) => [filter.id, filter]),
+    );
+
+    expect(
+      catalogNodesForFilter(nodes, byId[sourceFilterId("builtin")]!).map(
+        (spec) => spec.operator_id,
+      ),
+    ).toEqual(["text.input", "text.replace", "table.batch", "generic.pass"]);
+
+    // Nodes that take no inputs because they are inputs themselves.
+    expect(
+      catalogNodesForFilter(nodes, INPUT_NODES_FILTER).map(
+        (spec) => spec.operator_id,
+      ),
+    ).toEqual(["text.input", "ocr.external"]);
+  });
+
+  it("intersects source, artifact, and input-node filters", () => {
+    const nodes = catalogNodeSpecs(registry(), null);
+    const sources = buildSourceFilters(registry());
+    const builtin = sources.find((f) => f.id === sourceFilterId("builtin"))!;
+    const textArtifact = buildCatalogFilters(registry()).find(
+      (candidate) =>
+        candidate.id ===
+        artifactFilterId({ id: "scalar.text", schema_version: 1 }),
+    )!;
+
+    expect(
+      filterAndSearchCatalogNodes(
+        nodes,
+        [builtin, textArtifact],
+        "",
+        registry(),
+      ).map((spec) => spec.operator_id),
+    ).toEqual(["text.input", "text.replace"]);
+
+    expect(
+      filterAndSearchCatalogNodes(
+        nodes,
+        [builtin, textArtifact, INPUT_NODES_FILTER],
+        "",
+        registry(),
+      ).map((spec) => spec.operator_id),
+    ).toEqual(["text.input"]);
   });
 
   it("summarizes ports with artifact titles", () => {

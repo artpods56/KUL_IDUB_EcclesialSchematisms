@@ -20,12 +20,12 @@ interface GraphsLayoutProps {
 export default function GraphsLayout({ children }: GraphsLayoutProps) {
   const { workspaceSlug, graphId } = useParams<{
     workspaceSlug: string;
-    graphId: string;
+    graphId?: string;
   }>();
   const { workspace } = useWorkspaceContext();
   const { session } = useAuthSession();
 
-  if (!isSupportedWorkbenchGraphRoute(workspaceSlug, graphId)) {
+  if (!graphId || !isSupportedWorkbenchGraphRoute(workspaceSlug, graphId)) {
     return children;
   }
 
